@@ -84,6 +84,8 @@ export interface MemoryV2RecommendationOptions {
   applyHardFilters?: boolean;
   /** Assessment-derived CEFR profile shared by all recommendation paths. */
   cefrProfile?: CefrRecommendationProfile;
+  /** Explicit CEFR weight override for compatibility with engine callers. */
+  cefrWeight?: number;
   /** Effective catalog bands; computed when omitted. */
   allowedBands?: import('./articleLevel').CefrBand[];
   /** Enable the reversible CEFR candidate window for assessed users. */
@@ -120,6 +122,7 @@ export class MemoryV2RecommendationAdapter {
       minLearningZoneWords,
       maxUnknownWordsRatio,
       cefrProfile: options.cefrProfile,
+      cefrWeight: options.cefrWeight,
       allowedBands: options.allowedBands,
       cefrHardFilter: options.cefrHardFilter,
       minCandidatesAfterCefrFilter: options.minCandidatesAfterCefrFilter,
@@ -137,6 +140,7 @@ export class MemoryV2RecommendationAdapter {
       minLearningZoneWords: options.minLearningZoneWords ?? this.engineOptions.minLearningZoneWords,
       maxUnknownWordsRatio: options.maxUnknownWordsRatio ?? this.engineOptions.maxUnknownWordsRatio,
       cefrProfile: options.cefrProfile ?? this.engineOptions.cefrProfile,
+      cefrWeight: options.cefrWeight ?? this.engineOptions.cefrWeight,
       allowedBands: options.allowedBands ?? this.engineOptions.allowedBands,
       cefrHardFilter: options.cefrHardFilter ?? this.engineOptions.cefrHardFilter,
       minCandidatesAfterCefrFilter:
@@ -378,6 +382,7 @@ export class MemoryV2RecommendationAdapter {
       this.engineOptions.maxUnknownWordsRatio = options.maxUnknownWordsRatio;
     }
     if (options.cefrProfile !== undefined) this.engineOptions.cefrProfile = options.cefrProfile;
+    if (options.cefrWeight !== undefined) this.engineOptions.cefrWeight = options.cefrWeight;
     if (options.allowedBands !== undefined) this.engineOptions.allowedBands = options.allowedBands;
     if (options.cefrHardFilter !== undefined) this.engineOptions.cefrHardFilter = options.cefrHardFilter;
     if (options.minCandidatesAfterCefrFilter !== undefined) {

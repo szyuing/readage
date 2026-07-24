@@ -103,7 +103,7 @@ type ResolvedRecommendationParams = {
   cefrProfile?: CefrRecommendationProfile;
   cefrWeight?: number;
   allowedBands?: CefrBand[];
-  cefrHardFilter: boolean;
+  cefrHardFilter?: boolean;
   minCandidatesAfterCefrFilter: number;
 };
 
@@ -118,7 +118,6 @@ const DEFAULT_RECOMMENDATION_PARAMS: ResolvedRecommendationParams = {
   maxUnknownWordsRatio: 0.3,
   minProficiencyCoverage: 0.2,
   coldStartBaseScore: 10,
-  cefrHardFilter: false,
   minCandidatesAfterCefrFilter: 8,
 };
 
@@ -210,6 +209,12 @@ export class RecommendationEngine {
     const articleLevel = this.articleLevel(candidate);
     const relation = getCefrRelation(articleLevel, profile.userLevel);
     if (relation === 'unknown') return { score: 0, relation };
+    if (
+      !profile.hasAssessment
+      && (relation === 'far-higher' || relation === 'far-lower')
+    ) {
+      return { score: 0, relation };
+    }
 
     const isEffectivePreferred = allowedBands.includes(articleLevel as CefrBand);
     let base = 0;
@@ -479,7 +484,8 @@ export class RecommendationEngine {
     });
 
     const profile = this.getCefrProfile();
-    if (!params.cefrHardFilter || !profile.hasAssessment || filtered.length === 0) {
+    const shouldUseCefrHardFilter = params.cefrHardFilter ?? profile.hasAssessment;
+    if (!shouldUseCefrHardFilter || !profile.hasAssessment || filtered.length === 0) {
       return filtered;
     }
 
