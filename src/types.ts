@@ -1,6 +1,3 @@
-/** P1-P4 screen map (+ CEFR reading assessment as English test). */
-export type ScreenType = 'home' | 'library' | 'reading' | 'learning' | 'history' | 'assessment';
-
 export type ArticleSource =
   | 'user_input'
   | 'library'

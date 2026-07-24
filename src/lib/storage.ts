@@ -9,7 +9,6 @@ export const STORAGE_KEYS = {
   events: `${PREFIX}:events`,
   sessions: `${PREFIX}:sessions`,
   activeArticleId: `${PREFIX}:activeArticleId`,
-  currentScreen: `${PREFIX}:currentScreen`,
   weakPoints: `${PREFIX}:weakPoints`,
   learningDays: `${PREFIX}:learningDays`,
   readingAssessment: `${PREFIX}:readingAssessment`,
