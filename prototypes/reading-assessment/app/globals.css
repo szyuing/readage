@@ -10,7 +10,7 @@
   --mint: #f1ece1;
   --blue: #e9e3d8;
   --orange: #d7aa93;
-  --shadow: 0 16px 42px rgba(67, 55, 43, 0.08);
+  --shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 * {
@@ -53,16 +53,11 @@ select:focus-visible {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  padding: 0 4.5vw 72px;
+  padding: 0 24px 64px;
 }
 
 .ambient {
-  position: fixed;
-  z-index: -1;
-  border-radius: 999px;
-  filter: blur(2px);
-  opacity: 0.35;
-  pointer-events: none;
+  display: none;
 }
 
 .ambient-one {
@@ -82,8 +77,8 @@ select:focus-visible {
 }
 
 .site-header {
-  width: min(1400px, 100%);
-  height: 80px;
+  width: min(1040px, 100%);
+  height: 64px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -103,11 +98,11 @@ select:focus-visible {
 }
 
 .brand-mark {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 13px;
+  border-radius: 10px;
   background: var(--acid);
   color: #fff;
   font-family: Georgia, serif;
@@ -151,8 +146,8 @@ select:focus-visible {
 }
 
 .progress {
-  width: min(1400px, 100%);
-  margin: 20px auto 48px;
+  width: min(860px, 100%);
+  margin: 18px auto 36px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
@@ -188,23 +183,21 @@ select:focus-visible {
 .reading-layout,
 .questions-layout,
 .result-layout {
-  width: min(1400px, 100%);
   margin: 0 auto;
 }
 
 .questionnaire-layout {
+  width: min(820px, 100%);
   display: grid;
-  grid-template-columns: minmax(330px, 0.82fr) minmax(680px, 1.6fr);
-  gap: 48px;
+  grid-template-columns: 1fr;
+  gap: 24px;
   align-items: start;
 }
 
 .intro-panel {
-  min-height: 700px;
-  padding: 44px 8px 28px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  min-height: auto;
+  padding: 0;
+  display: block;
 }
 
 .kicker,
@@ -222,10 +215,10 @@ select:focus-visible {
 .result-hero h1 {
   margin: 0;
   font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
-  font-size: clamp(44px, 4.8vw, 68px);
+  font-size: clamp(36px, 5vw, 48px);
   font-weight: 500;
-  letter-spacing: -0.055em;
-  line-height: 1.05;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
 }
 
 .intro-panel h1 span,
@@ -237,38 +230,30 @@ select:focus-visible {
 
 .intro-panel h1 span::after,
 .result-hero h1 span::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: -4px;
-  right: -5px;
-  bottom: 2px;
-  height: 0.22em;
-  border-radius: 99px;
-  background: rgba(195, 94, 55, 0.2);
-  transform: rotate(-1.5deg);
+  display: none;
 }
 
 .intro-copy,
 .large-copy {
-  max-width: 520px;
-  margin: 30px 0 0;
+  max-width: 700px;
+  margin: 16px 0 0;
   color: #5c554d;
   font-size: 16px;
-  line-height: 1.85;
+  line-height: 1.7;
 }
 
 .mini-legend {
+  margin-top: 20px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 12px;
 }
 
 .mini-legend div {
-  padding: 17px 14px;
-  border: 1px solid rgba(23, 35, 29, 0.15);
-  border-radius: 14px;
-  background: rgba(255, 253, 248, 0.45);
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
 }
 
 .mini-legend strong,
@@ -278,7 +263,7 @@ select:focus-visible {
 
 .mini-legend strong {
   font-family: Georgia, serif;
-  font-size: 25px;
+  font-size: 22px;
   font-weight: 500;
 }
 
@@ -295,14 +280,13 @@ select:focus-visible {
 .behavior-card,
 .recommendation-card {
   border: 1px solid var(--line);
-  border-radius: 18px;
-  background: rgba(250, 248, 243, 0.96);
+  border-radius: 16px;
+  background: var(--card);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
 }
 
 .form-card {
-  padding: 36px;
+  padding: 32px;
 }
 
 .form-heading,
@@ -330,7 +314,7 @@ select:focus-visible {
 
 .form-heading h2 {
   font-family: Georgia, "Times New Roman", "Noto Serif SC", serif;
-  font-size: 31px;
+  font-size: 24px;
   font-weight: 500;
   letter-spacing: -0.03em;
 }
@@ -352,7 +336,7 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #f1ece1;
 }
 
@@ -423,7 +407,7 @@ select:focus-visible {
 }
 
 .field select {
-  height: 50px;
+  height: 46px;
   padding: 0 14px;
 }
 
@@ -444,14 +428,14 @@ select:focus-visible {
 }
 
 .choice-card {
-  min-height: 125px;
+  min-height: 112px;
   position: relative;
   padding: 16px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   border: 1px solid #dcd5c7;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fffdf9;
   cursor: pointer;
   transition: 160ms ease;
@@ -460,7 +444,6 @@ select:focus-visible {
 .choice-card:hover,
 .choice-card.selected {
   border-color: var(--acid);
-  transform: translateY(-2px);
 }
 
 .choice-card.selected {
@@ -529,7 +512,7 @@ select:focus-visible {
   gap: 8px;
   padding: 12px;
   border: 1px solid #e3ddd1;
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fffdf9;
 }
 
@@ -584,7 +567,7 @@ select:focus-visible {
   width: 100%;
   padding: 18px;
   border: 1px dashed #c9c0b4;
-  border-radius: 14px;
+  border-radius: 12px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -613,15 +596,15 @@ select:focus-visible {
 
 .primary-button,
 .secondary-button {
-  min-height: 50px;
-  padding: 0 18px 0 22px;
+  min-height: 46px;
+  padding: 0 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: 10px;
   border: 1px solid var(--acid);
-  border-radius: 13px;
-  font-weight: 800;
+  border-radius: 12px;
+  font-weight: 600;
   cursor: pointer;
   transition: 160ms ease;
 }
@@ -634,8 +617,6 @@ select:focus-visible {
 .primary-button:hover {
   border-color: #a94e2b;
   background: #a94e2b;
-  transform: translateY(-2px);
-  box-shadow: 0 10px 22px rgba(169, 78, 43, 0.18);
 }
 
 .primary-button span {
@@ -658,23 +639,23 @@ select:focus-visible {
 }
 
 .state-card {
-  width: min(790px, 100%);
-  min-height: 580px;
-  margin: 40px auto 0;
-  padding: 60px;
+  width: min(720px, 100%);
+  min-height: 480px;
+  margin: 24px auto 0;
+  padding: 48px 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line);
-  border-radius: 20px;
-  background: rgba(250, 248, 243, 0.94);
+  border-radius: 16px;
+  background: var(--card);
   box-shadow: var(--shadow);
   text-align: center;
 }
 
 .state-card h1 {
-  font-size: clamp(42px, 6vw, 68px);
+  font-size: clamp(32px, 5vw, 44px);
 }
 
 .state-card > p:not(.kicker) {
@@ -819,20 +800,18 @@ select:focus-visible {
 }
 
 .reading-layout {
+  width: min(900px, 100%);
   display: grid;
-  grid-template-columns: minmax(250px, 0.55fr) minmax(650px, 1.45fr);
-  gap: 42px;
+  grid-template-columns: 1fr;
+  gap: 22px;
   align-items: start;
 }
 
 .reading-sidebar {
-  min-height: 620px;
-  position: sticky;
-  top: 20px;
-  padding: 28px 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  min-height: auto;
+  position: static;
+  padding: 0;
+  display: block;
 }
 
 .band-pill {
@@ -853,23 +832,24 @@ select:focus-visible {
 .questions-intro h1 {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(38px, 4.2vw, 58px);
+  font-size: clamp(30px, 4vw, 40px);
   font-weight: 500;
-  letter-spacing: -0.05em;
-  line-height: 1.02;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
 }
 
 .reading-sidebar > div > p:last-child,
 .questions-intro > p {
-  max-width: 370px;
+  max-width: 700px;
   color: var(--muted);
-  line-height: 1.75;
+  line-height: 1.65;
 }
 
 .reading-meta {
+  max-width: 520px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  margin: 32px 0;
+  margin: 20px 0;
   border-top: 1px solid #d8d1c3;
   border-bottom: 1px solid #d8d1c3;
 }
@@ -896,6 +876,7 @@ select:focus-visible {
 }
 
 .click-hint {
+  width: fit-content;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -920,11 +901,11 @@ select:focus-visible {
 }
 
 .article-card {
-  padding: clamp(28px, 5vw, 66px);
+  padding: clamp(24px, 5vw, 48px);
 }
 
 .article-topline {
-  margin-bottom: 45px;
+  margin-bottom: 32px;
   padding-bottom: 13px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
@@ -943,8 +924,8 @@ select:focus-visible {
   margin: 0 0 1.35em;
   color: #332e28;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(19px, 1.6vw, 24px);
-  line-height: 1.75;
+  font-size: clamp(17px, 1.8vw, 20px);
+  line-height: 1.8;
 }
 
 .word-token {
@@ -1083,25 +1064,27 @@ select:focus-visible {
 }
 
 .questions-layout {
+  width: min(820px, 100%);
   display: grid;
-  grid-template-columns: minmax(270px, 0.55fr) minmax(660px, 1.45fr);
-  gap: 42px;
+  grid-template-columns: 1fr;
+  gap: 22px;
   align-items: start;
 }
 
 .questions-intro {
-  position: sticky;
-  top: 20px;
-  padding: 25px 0;
+  position: static;
+  padding: 0;
 }
 
 .questions-intro h1 {
-  font-size: clamp(38px, 4.3vw, 61px);
+  max-width: 700px;
+  font-size: clamp(30px, 4vw, 40px);
 }
 
 .answer-progress {
+  max-width: 520px;
   height: 7px;
-  margin-top: 30px;
+  margin-top: 20px;
   overflow: hidden;
   border-radius: 99px;
   background: #e4ddd2;
@@ -1129,7 +1112,7 @@ select:focus-visible {
 
 .question-card {
   margin: 0;
-  padding: 28px;
+  padding: 24px;
 }
 
 .question-card legend {
@@ -1225,14 +1208,16 @@ select:focus-visible {
 
 .submit-panel {
   margin-top: 9px;
-  padding: 22px;
+  padding: 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  border-radius: 18px;
-  background: var(--ink);
-  color: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
 }
 
 .submit-panel strong {
@@ -1241,7 +1226,7 @@ select:focus-visible {
 
 .submit-panel p {
   margin: 4px 0 0;
-  color: #c9c0b4;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -1256,51 +1241,51 @@ select:focus-visible {
 }
 
 .submit-panel .primary-button:disabled {
-  border-color: #5f5750;
-  background: #5f5750;
-  color: #c9c0b4;
+  border-color: #d5cec3;
+  background: #d5cec3;
+  color: #fff;
 }
 
 .result-layout {
-  max-width: 1220px;
+  width: min(960px, 100%);
 }
 
 .result-hero {
-  padding: 30px 0 55px;
+  padding: 0 0 32px;
   display: flex;
-  align-items: end;
+  align-items: start;
+  flex-direction: column;
   justify-content: space-between;
-  gap: 50px;
+  gap: 26px;
 }
 
 .result-hero h1 {
-  font-size: clamp(48px, 6vw, 76px);
+  font-size: clamp(36px, 5vw, 48px);
 }
 
 .level-shift {
-  min-width: 370px;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 .level-shift > div {
-  width: 156px;
-  height: 156px;
-  padding: 19px;
+  width: 140px;
+  height: 132px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   border: 1px solid #d8d1c3;
-  border-radius: 18px;
-  background: rgba(250, 248, 243, 0.76);
+  border-radius: 16px;
+  background: var(--card);
 }
 
 .level-shift > div.recommended {
   border-color: var(--acid);
   background: #f3e4dd;
   color: #a94e2b;
-  transform: rotate(1deg);
 }
 
 .level-shift small {
@@ -1312,7 +1297,7 @@ select:focus-visible {
 
 .level-shift strong {
   font-family: Georgia, serif;
-  font-size: 62px;
+  font-size: 48px;
   font-weight: 500;
 }
 
@@ -1392,7 +1377,7 @@ select:focus-visible {
 .result-bottom {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
@@ -1445,12 +1430,12 @@ select:focus-visible {
 }
 
 .recommendation-card {
-  background: var(--ink);
-  color: #fff;
+  background: var(--card);
+  color: var(--ink);
 }
 
 .recommendation-card .card-heading span {
-  color: #c9c0b4;
+  color: var(--muted);
 }
 
 .recommendation-card ul {
@@ -1465,11 +1450,11 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  border-top: 1px solid #514943;
+  border-top: 1px solid var(--line);
 }
 
 .recommendation-card li span {
-  color: #c9c0b4;
+  color: var(--muted);
   font-size: 9px;
 }
 
@@ -1487,39 +1472,22 @@ select:focus-visible {
   font-size: 10px;
 }
 
-@media (max-width: 1100px) {
-  .questionnaire-layout,
-  .reading-layout,
-  .questions-layout {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 1024px) {
   .intro-panel {
     min-height: auto;
-    padding: 20px 0 0;
+    padding: 0;
   }
 
   .mini-legend {
-    margin: 28px 0;
-  }
-
-  .reading-sidebar,
-  .questions-intro {
-    min-height: auto;
-    position: static;
+    margin: 20px 0 0;
   }
 
   .reading-meta {
     max-width: 500px;
   }
-
-  .result-hero {
-    align-items: start;
-    flex-direction: column;
-  }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .app-shell {
     padding: 0 18px 48px;
   }
@@ -1544,7 +1512,7 @@ select:focus-visible {
   .article-card,
   .question-card {
     padding: 20px;
-    border-radius: 18px;
+    border-radius: 16px;
   }
 
   .field-grid.two,
@@ -1584,13 +1552,13 @@ select:focus-visible {
   }
 
   .state-card {
-    min-height: 520px;
+    min-height: 420px;
     padding: 30px 20px;
   }
 
   .reading-sidebar h1,
   .questions-intro h1 {
-    font-size: 45px;
+    font-size: 30px;
   }
 
   .word-popover {
