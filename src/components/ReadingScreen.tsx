@@ -6,19 +6,19 @@ import {
   BookOpen,
   Globe,
   Mic,
+  MessageCircle,
   Send,
   Sparkles,
   CheckCircle2,
-  BookmarkPlus,
   X,
   Volume2,
   Copy,
+  PenLine,
 } from 'lucide-react';
 import {
   Article,
   GrammarExplanation,
   TranslationResult,
-  ReviewWord,
   StructuredAssessResult,
   ChatMessage,
   ReadingAdvancePayload,
@@ -34,6 +34,7 @@ import { getPhraseHighlightMatches } from '../lib/textHighlight';
 import { postTutor } from '../lib/tutorClient';
 import type { ImportJob } from '../lib/articleImport';
 import { needsImportEnrichment } from '../lib/articleImport';
+import { classifyArticleParagraph } from '../lib/articlePresentation';
 import {
   buildReadingAdvancePayload,
   countArticleWords,
@@ -118,7 +119,6 @@ interface ReadingScreenProps {
   /** Open the parent article this rewrite was based on. */
   onOpenParentArticle?: () => void;
   onBack: () => void;
-  onAddReviewWord: (word: Partial<ReviewWord>) => void;
   onWordClick?: (word: string) => void;
   onGrammarQuery?: (wordOrPhrase: string) => void;
   onExposures?: (words: string[]) => void;
@@ -140,7 +140,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   onRewriteAtLevel,
   onOpenParentArticle,
   onBack,
-  onAddReviewWord,
   onWordClick,
   onGrammarQuery,
   onExposures,
@@ -172,6 +171,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
   const [showChatPanel, setShowChatPanel] = useState(initialChatMessages.length > 0);
+  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const composerInputRef = useRef<HTMLInputElement>(null);
   const [articleVisible, setArticleVisible] = useState(false);
   const [showNavigationHint, setShowNavigationHint] = useState(false);
 
@@ -182,8 +183,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   useEffect(() => {
     setChatMessages(initialChatMessages);
     setShowChatPanel(initialChatMessages.length > 0);
+    setIsComposerExpanded(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id]);
+
+  useEffect(() => {
+    if (isComposerExpanded) composerInputRef.current?.focus();
+  }, [isComposerExpanded]);
 
   const [showMenu, setShowMenu] = useState(false);
   const [fontSize, setFontSize] = useState<'normal' | 'large' | 'xlarge'>('normal');
@@ -673,29 +679,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     }
   };
 
-  const handleSaveToReview = (
-    word: string,
-    def: string,
-    ex: string,
-    phonetic?: string,
-    partOfSpeech?: string,
-    definitionChinese?: string,
-    chineseTranslation?: string
-  ) => {
-    onAddReviewWord({
-      word,
-      definition: def,
-      exampleSentence: ex,
-      phonetic: phonetic || '',
-      partOfSpeech: partOfSpeech || '',
-      definitionChinese: definitionChinese || '',
-      chineseTranslation: chineseTranslation || '',
-      mastered: false,
-    });
-    setAddedWordSuccess(word);
-    setTimeout(() => setAddedWordSuccess(null), 3000);
-  };
-
   const handleSendQuestion = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!userInput.trim() || isSending) return;
@@ -847,8 +830,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div className="text-center min-w-0 px-2">
-          <h1 className="font-serif text-lg sm:text-xl font-normal text-[#2C2723] truncate max-w-xs sm:max-w-md">
+        <div className="text-center min-w-0 flex-1 px-2">
+          <h1 className="font-serif text-base sm:text-lg font-bold leading-tight text-[#2C2723] truncate max-w-[70vw] sm:max-w-md mx-auto">
             {article.title}
           </h1>
           {(article.levelRating || article.level || article.source) && (
@@ -886,9 +869,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           {showMenu && (
             <div className="absolute right-0 mt-2 w-52 bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-xs text-[#3D372E]">
-              <div className="px-3 py-1.5 font-semibold text-[#8C8479] uppercase tracking-wider">
-                Font Size
-              </div>
               <div className="flex gap-1 p-1 mb-2 bg-[#EFECE3] rounded-lg">
                 {(['normal', 'large', 'xlarge'] as const).map((size) => (
                   <button
@@ -935,10 +915,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     type="button"
                     disabled={isRewriting}
                     onClick={() => setShowRewriteLevels((v) => !v)}
-                    className="w-full text-left px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center gap-2 disabled:opacity-50"
+                    className="w-full px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center justify-center disabled:opacity-50"
+                    title={isRewriting ? '正在改写' : '按等级改写'}
+                    aria-label={isRewriting ? '正在改写' : '按等级改写'}
                   >
-                    <Sparkles className="w-4 h-4 text-[#C35E37]" />
-                    <span>{isRewriting ? '正在改写…' : '按等级改写…'}</span>
+                    <PenLine className="w-4 h-4 text-[#C35E37]" />
                   </button>
                   {showRewriteLevels && !isRewriting && (
                     <div className="px-2 pb-2 grid grid-cols-4 gap-1">
@@ -967,9 +948,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                       })}
                     </div>
                   )}
-                  <p className="px-3 pb-1 text-[10px] text-[#9C9388] leading-snug">
-                    保留原文；新版本以所选 CEFR 为唯一评级，并后台翻译。
-                  </p>
                 </div>
               )}
             </div>
@@ -1091,37 +1069,74 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         <div
           ref={contentRef}
           onMouseUp={handleTextSelection}
-          className={`font-serif text-[#2B2723] space-y-6 select-text ${getFontSizeClass()}`}
+          className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
         >
           {article.content.map((paragraph, pIdx) => {
+            const paragraphKind = classifyArticleParagraph(paragraph, article.title);
+            if (paragraphKind === 'furniture') return null;
+
             const words = paragraph.trim().split(/\s+/);
             const highlightMatches = getPhraseHighlightMatches(words, highlightTerms);
             const zh = article.paragraphTranslations?.[pIdx];
+            const wordSpans = words.map((word, wIdx) => {
+              const matchedTerm = highlightMatches[wIdx];
+              return (
+                <React.Fragment key={wIdx}>
+                  <span
+                    onClick={(e) => handleWordClick(matchedTerm || word, paragraph, wIdx, e)}
+                    className={
+                      matchedTerm
+                        ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
+                        : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'
+                    }
+                    title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
+                  >
+                    {word}
+                  </span>
+                  {wIdx < words.length - 1 ? ' ' : null}
+                </React.Fragment>
+              );
+            });
+
+            const translationClassName =
+              paragraphKind === 'title'
+                ? 'font-sans text-sm sm:text-base leading-relaxed text-[#7B7267] pl-3 border-l border-[#D6CFC1]'
+                : paragraphKind === 'author'
+                  ? 'font-sans text-xs sm:text-sm leading-relaxed text-[#9A9185] pl-3'
+                  : 'font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5';
+
             return (
-              <div key={pIdx} className="space-y-2">
-                <p data-reading-paragraph={pIdx} className="tracking-wide">
-                  {words.map((word, wIdx) => {
-                    const matchedTerm = highlightMatches[wIdx];
-                    return (
-                      <React.Fragment key={wIdx}>
-                        <span
-                          onClick={(e) => handleWordClick(matchedTerm || word, paragraph, wIdx, e)}
-                          className={
-                            matchedTerm
-                              ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
-                              : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'
-                          }
-                          title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
-                        >
-                          {word}
-                        </span>
-                        {wIdx < words.length - 1 ? ' ' : null}
-                      </React.Fragment>
-                    );
-                  })}
-                </p>
+              <div
+                key={pIdx}
+                className={
+                  paragraphKind === 'title'
+                    ? 'space-y-3 pt-2 pb-1'
+                    : paragraphKind === 'author'
+                      ? 'space-y-2 pt-1 pb-2'
+                      : 'space-y-2'
+                }
+              >
+                {paragraphKind === 'title' ? (
+                  <h2
+                    data-reading-paragraph={pIdx}
+                    className="font-serif text-2xl sm:text-3xl font-bold leading-tight tracking-normal text-[#2A2621]"
+                  >
+                    {wordSpans}
+                  </h2>
+                ) : (
+                  <p
+                    data-reading-paragraph={pIdx}
+                    className={
+                      paragraphKind === 'author'
+                        ? 'font-sans text-sm sm:text-base font-bold leading-relaxed tracking-normal text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
+                        : 'tracking-normal'
+                    }
+                  >
+                    {wordSpans}
+                  </p>
+                )}
                 {showParagraphTranslations && zh && (
-                  <p className="font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5">
+                  <p className={translationClassName}>
                     {zh}
                   </p>
                 )}
@@ -1197,7 +1212,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           document.body,
         )}
 
-      {(isExplaining || grammarResult) && (
+      {/* Keep fixed dialogs outside the translated reading root so they stay in the viewport on scroll. */}
+      {(isExplaining || grammarResult) && createPortal(
         <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-6 relative max-h-[85vh] overflow-y-auto">
             <button
@@ -1217,7 +1233,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
             ) : grammarResult ? (
               <div className="space-y-4 text-left">
-                <div className="flex items-start justify-between border-b border-[#E8E2D5] pb-3">
+                <div className="flex items-start justify-between gap-3 border-b border-[#E8E2D5] pb-3 pr-12">
                   <div>
                     <h3 className="font-serif text-3xl font-bold text-[#2A2621]">
                       {grammarResult.wordOrPhrase}
@@ -1253,7 +1269,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   </div>
                   <button
                     onClick={() => handleSpeakText(grammarResult.wordOrPhrase)}
-                    className="p-2.5 bg-[#EFEAE0] hover:bg-[#E3DCCF] rounded-full text-[#332E28] transition-colors"
+                    className="shrink-0 p-2.5 bg-[#EFEAE0] hover:bg-[#E3DCCF] rounded-full text-[#332E28] transition-colors"
                   >
                     <Volume2 className="w-4 h-4" />
                   </button>
@@ -1296,12 +1312,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                         {grammarResult.definition}
                       </p>
                     )}
-                    {grammarResult.definitionChinese && (
-                      <p className="text-xs text-[#065F46] font-medium bg-[#ECFDF5] px-2 py-1 rounded border border-[#A7F3D0]">
-                        {'释义汉译：'}
-                        {grammarResult.definitionChinese}
-                      </p>
-                    )}
                   </div>
                 </div>
 
@@ -1315,24 +1325,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                         <li key={idx}>{rule}</li>
                       ))}
                     </ul>
-                  </div>
-                )}
-
-                {grammarResult.exampleSentences?.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                      语境例句
-                    </span>
-                    <div className="space-y-1.5">
-                      {grammarResult.exampleSentences.map((ex, idx) => (
-                        <div
-                          key={idx}
-                          className="p-2.5 bg-[#F2ECE0] rounded-lg text-xs text-[#2B2722] italic border border-[#E5DEC3]"
-                        >
-                          &quot;{ex}&quot;
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 )}
 
@@ -1392,31 +1384,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   </div>
                 )}
 
-                <button
-                  onClick={() => {
-                    handleSaveToReview(
-                      grammarResult.wordOrPhrase,
-                      grammarResult.definition,
-                      grammarResult.exampleSentences?.[0] || '',
-                      grammarResult.phonetic,
-                      grammarResult.type,
-                      grammarResult.definitionChinese,
-                      grammarResult.chineseTranslation
-                    );
-                    setGrammarResult(null);
-                  }}
-                  className="w-full mt-2 py-3 bg-[#C35E37] hover:bg-[#A94E2B] text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2 shadow-xs transition-colors"
-                >
-                  <BookmarkPlus className="w-4 h-4" />
-                  <span>Add to Review Words</span>
-                </button>
               </div>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {(isTranslating || translationResult) && (
+      {(isTranslating || translationResult) && createPortal(
         <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-6 relative">
             <button
@@ -1455,7 +1430,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {showChatPanel && (
@@ -1499,8 +1475,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      <footer className="fixed bottom-0 left-0 right-0 bg-[#F8F6F0]/95 backdrop-blur-md border-t border-[#E8E3D8] px-4 py-3 z-30">
-        <div className="max-w-3xl mx-auto flex items-center gap-2">
+      {isComposerExpanded ? (
+        <footer className="fixed bottom-4 left-4 right-4 z-40 sm:left-auto sm:right-8 sm:w-[min(42rem,calc(100vw-4rem))]">
+          <div className="flex items-center gap-1.5 rounded-2xl border border-[#DDD6C8] bg-[#F8F6F0]/95 p-2 shadow-xl backdrop-blur-md">
           <button
             type="button"
             onClick={() => {
@@ -1525,7 +1502,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 ];
               });
             }}
-            className="p-2.5 hover:bg-[#EFEAE0] rounded-full text-[#5B544B] transition-colors"
+            className="shrink-0 rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+            aria-label="Open voice practice guidance"
             title="Voice: use Oral Practice · StepAudio"
           >
             <Mic className="w-5 h-5" />
@@ -1533,26 +1511,57 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           <form
             onSubmit={handleSendQuestion}
-            className="flex-1 flex items-center bg-white border border-[#DDD6C8] rounded-full px-4 py-2 shadow-2xs focus-within:border-[#C35E37] transition-all"
+            className="flex min-w-0 flex-1 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
+            aria-label="Article discussion"
           >
             <input
               type="text"
+              ref={composerInputRef}
+              id="reading-composer-input"
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setIsComposerExpanded(false);
+              }}
               placeholder="问大意、难句，或谈谈你的观点…"
-              className="flex-1 bg-transparent text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
+              aria-label="Ask about this article"
+              className="min-w-0 flex-1 bg-transparent text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
             />
             <button
               type="submit"
               disabled={!userInput.trim() || isSending}
-              className="p-1.5 bg-[#C35E37] hover:bg-[#A94E2B] disabled:opacity-40 text-white rounded-full transition-colors ml-2"
+              className="ml-2 shrink-0 rounded-full bg-[#C35E37] p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
+              aria-label="Send question"
             >
               <Send className="w-3.5 h-3.5" />
             </button>
           </form>
 
+          <button
+            type="button"
+            onClick={() => setIsComposerExpanded(false)}
+            className="shrink-0 rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+            aria-label="Collapse article discussion input"
+            title="Collapse input"
+          >
+            <X className="h-5 w-5" />
+          </button>
+
         </div>
       </footer>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsComposerExpanded(true)}
+          className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 sm:right-8"
+          aria-label="Open article discussion input"
+          aria-expanded={false}
+          aria-controls="reading-composer-input"
+          title="Ask about this article"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </button>
+      )}
     </div>
   );
 };

@@ -43,7 +43,6 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
           </button>
           <div>
             <h1 className="font-serif text-2xl font-normal text-[#2C2723]">文章历史</h1>
-            <p className="text-[11px] text-[#8C8478]">P4 · 读过 / 在读 · 点击恢复会话</p>
           </div>
         </div>
 

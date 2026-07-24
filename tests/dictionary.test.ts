@@ -89,6 +89,20 @@ describe('buildDictionaryExplanation', () => {
     const explanation = buildDictionaryExplanation('run', entry);
     assert.deepEqual(explanation.exampleSentences, []);
   });
+
+  it('cleans ECDICT phonetic quirks and exchange noise', async () => {
+    const entry = await lookupDictionaryWord('serendipity');
+    assert.ok(entry);
+    const explanation = buildDictionaryExplanation('serendipity', entry);
+    assert.ok(explanation.phonetic);
+    assert.doesNotMatch(explanation.phonetic, /^\/[,;\s]/, 'phonetic must not keep a leading comma');
+
+    for (const exchange of explanation.exchanges ?? []) {
+      assert.ok(exchange.value.trim().length >= 2, `exchange value looks like noise: ${exchange.value}`);
+    }
+    const keys = (explanation.exchanges ?? []).map((item) => `${item.label}:${item.value.toLowerCase()}`);
+    assert.equal(new Set(keys).size, keys.length, 'exchanges must be deduplicated');
+  });
 });
 
 describe('isDictionaryExplainFirstEnabled', () => {

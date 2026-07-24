@@ -95,6 +95,29 @@ function firstNonEmpty(...values: Array<string | undefined>): string {
   return '';
 }
 
+/** ECDICT quirks: some phonetics carry a leading comma (/,ser…), and the
+ * exchange field can hold single-letter noise mislabeled as a word form. */
+function cleanPhonetic(phonetic: string): string {
+  const inner = phonetic.trim().replace(/^\/|\/$/g, '').replace(/^[,;\s]+/, '').trim();
+  return inner ? `/${inner}/` : '';
+}
+
+function cleanExchanges(
+  exchanges: Array<{ label: string; value: string }>
+): Array<{ label: string; value: string }> {
+  const seen = new Set<string>();
+  const cleaned: Array<{ label: string; value: string }> = [];
+  for (const exchange of exchanges) {
+    const value = exchange.value.trim();
+    if (value.length < 2) continue;
+    const key = `${exchange.label}:${value.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push({ label: exchange.label, value });
+  }
+  return cleaned;
+}
+
 /**
  * Map a dictionary entry onto the existing GrammarExplanation shape so the
  * reading UI can render it without changes, plus dictionary-only extras
@@ -142,10 +165,13 @@ export function buildDictionaryExplanation(
   // is the most relevant "live" example.
   const exampleSentences = contextSentence?.trim() ? [contextSentence.trim()] : [];
 
+  const exchanges = cleanExchanges(entry.exchanges);
+  const phonetic = cleanPhonetic(entry.phonetic);
+
   return {
     wordOrPhrase: entry.lemma || query,
     type: entry.partOfSpeech || 'unknown',
-    phonetic: entry.phonetic || undefined,
+    phonetic: phonetic || undefined,
     definition,
     definitionChinese: definitionChinese || undefined,
     chineseTranslation: chineseTranslation || undefined,
@@ -155,7 +181,7 @@ export function buildDictionaryExplanation(
     cefrLevel: entry.cefrLevel ?? undefined,
     tags: entry.tags.length ? entry.tags : undefined,
     senses: senses.length ? senses : undefined,
-    exchanges: entry.exchanges.length ? entry.exchanges : undefined,
+    exchanges: exchanges.length ? exchanges : undefined,
     collocations: entry.collocations.length ? entry.collocations.slice(0, 6) : undefined,
     relatedWords: entry.relatedWords.length ? entry.relatedWords.slice(0, 10) : undefined,
   };

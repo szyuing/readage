@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScreenType,
   Article,
-  ReviewWord,
   LearningEvent,
   ArticleSession,
   StructuredAssessResult,
@@ -507,12 +506,6 @@ export default function App() {
     ingestArticle(article, { open: false, source: 'retry', retryEnrichment: true });
   };
 
-  const handleAddReviewWord = (wordData: Partial<ReviewWord>) => {
-    if (!wordData.word) return;
-    // Memory V2.2: 已删除 applyAddToReview，通过自然阅读积累数据
-    pushEvent('add_review', { articleId: activeArticle?.id, lemma: toLemma(wordData.word) });
-  };
-
   const handleWordClick = (word: string) => {
     // Memory V2.2: 点击事件在 ReadingScreen 中自动记录
     pushEvent('click', { articleId: activeArticle?.id, lemma: toLemma(word) });
@@ -966,6 +959,8 @@ export default function App() {
           ).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
+              aria-label={label}
+              title={label}
               onClick={() => {
                 if (
                   id === 'reading'
@@ -985,7 +980,7 @@ export default function App() {
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{label}</span>
+              {id === 'library' && <span className="hidden sm:inline">{label}</span>}
             </button>
           ))}
         </div>
@@ -1089,7 +1084,6 @@ export default function App() {
                 : undefined
             }
             onBack={returnHome}
-            onAddReviewWord={handleAddReviewWord}
             onWordClick={handleWordClick}
             onGrammarQuery={handleGrammarQuery}
             mode={isRecommendationReading ? 'recommendation-feed' : 'single'}
