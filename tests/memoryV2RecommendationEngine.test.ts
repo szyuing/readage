@@ -318,7 +318,6 @@ describe('review hit-rate ranking', () => {
     const engine = new RecommendationEngine({
       cefrProfile: profile,
       allowedBands: ['B2'],
-      cefrHardFilter: true,
       minCandidatesAfterCefrFilter: 2,
     });
     const eligible = [
