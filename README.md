@@ -53,7 +53,7 @@ npm run dev
 
 ### 外刊杂志（Library → 外刊杂志）
 
-从 [awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks) **定期/手动导入并解析**经济学人、纽约客、大西洋月刊、Wired：
+从 [awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks) **定期/手动导入并解析**经济学人、纽约客、大西洋月刊、Wired；同时从 [News in Levels](https://www.newsinlevels.com/) 导入 A2 Level 1 与 B1 Level 2 分级新闻：
 
 1. 打开 **文章库 → 外刊杂志**
 2. 点击 **同步外刊**（或等待定时任务）

@@ -24,7 +24,9 @@ export interface RemoteIssueCandidate {
   issueLabel: string;
   path: string;
   preferredFile: GitHubContentItem;
-  format: 'epub' | 'pdf';
+  format: 'epub' | 'pdf' | 'html';
+  /** In-memory body for web sources that do not have a downloadable archive. */
+  content?: string;
 }
 
 const MAX_REDIRECTS = 5;

@@ -10,6 +10,7 @@ import {
 } from '../server/magazines/config';
 import { parseEpubBuffer } from '../server/magazines/parseEpub';
 import { chaptersToArticles } from '../server/magazines/normalize';
+import { mergeConfiguredSourceSummaries } from '../server/magazines/store';
 
 describe('magazine config helpers', () => {
   it('parses economist-style issue folders', () => {
@@ -42,6 +43,24 @@ describe('magazine config helpers', () => {
       if (prev === undefined) delete process.env.MAGAZINE_SYNC_ON_BOOT;
       else process.env.MAGAZINE_SYNC_ON_BOOT = prev;
     }
+  });
+});
+
+describe('magazine source catalog', () => {
+  it('keeps newly configured sources visible in an older persisted index', () => {
+    const sources = mergeConfiguredSourceSummaries([
+      {
+        id: 'wired',
+        displayName: 'Old Wired label',
+        levelHint: 'B2',
+        topic: 'Technology',
+        issueCount: 4,
+      },
+    ]);
+
+    assert.equal(sources.find((source) => source.id === 'wired')?.issueCount, 4);
+    assert.equal(sources.find((source) => source.id === 'news_in_levels_a2')?.levelHint, 'A2');
+    assert.equal(sources.find((source) => source.id === 'news_in_levels_b1')?.levelHint, 'B1');
   });
 });
 

@@ -19,11 +19,16 @@ export type ProficiencyLevel = 0 | 1 | 2 | 3 | 4;
 
 export type MagazineSourceId = 'economist' | 'new_yorker' | 'atlantic' | 'wired' | string;
 export type MagazineIssueStatus = 'ready' | 'parsing' | 'failed' | 'partial';
-export type MagazineFormat = 'epub' | 'pdf';
+export type MagazineFormat = 'epub' | 'pdf' | 'html';
+export type MagazineSourceProvider = 'github' | 'news_in_levels';
 
 export interface MagazineSourceMeta {
   id: MagazineSourceId;
-  repoDir: string;
+  /** GitHub directory for the default provider. */
+  repoDir?: string;
+  /** Fixed source page for non-GitHub providers. */
+  sourceUrl?: string;
+  provider?: MagazineSourceProvider;
   displayName: string;
   levelHint?: string;
   topic?: string;

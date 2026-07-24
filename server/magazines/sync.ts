@@ -6,6 +6,7 @@ import {
   makeIssueId,
 } from './config';
 import { discoverIssues, downloadFile } from './github';
+import { discoverNewsInLevelsIssues, parseNewsInLevelsArticle } from './newsInLevels';
 import { articlesToStubs, buildIssueMeta, chaptersToArticles } from './normalize';
 import { parseEpubBuffer } from './parseEpub';
 import { parsePdfBuffer } from './parsePdf';
@@ -86,7 +87,13 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
 
       let candidates;
       try {
-        candidates = await discoverIssues(source.repoDir, maxIssues);
+        candidates = source.provider === 'news_in_levels'
+          ? await discoverNewsInLevelsIssues(source, maxIssues)
+          : source.repoDir
+            ? await discoverIssues(source.repoDir, maxIssues)
+            : (() => {
+                throw new Error(`GitHub source ${source.id} is missing repoDir`);
+              })();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         result.errors.push(`${sourceId}: discover failed: ${message}`);
@@ -110,7 +117,10 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
         try {
           const ext = candidate.format;
           let buffer: Buffer;
-          if (await blobExists(sha, ext)) {
+          if (candidate.format === 'html') {
+            if (!candidate.content) throw new Error('Web source returned an empty HTML page');
+            buffer = Buffer.from(candidate.content, 'utf8');
+          } else if (await blobExists(sha, ext)) {
             buffer = await readBlob(sha, ext);
           } else {
             if (!candidate.preferredFile.download_url) {
@@ -122,8 +132,16 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
           }
 
           progress = `parsing ${issueId}`;
-          let chapters =
-            candidate.format === 'epub'
+          let chapters = candidate.format === 'html'
+            ? (() => {
+                const parsed = parseNewsInLevelsArticle(buffer.toString('utf8'));
+                return [{
+                  title: parsed.title,
+                  paragraphs: parsed.paragraphs,
+                  wordCount: parsed.paragraphs.join(' ').split(/\s+/).filter(Boolean).length,
+                }];
+              })()
+            : candidate.format === 'epub'
               ? await parseEpubBuffer(buffer)
               : await parsePdfBuffer(buffer);
 

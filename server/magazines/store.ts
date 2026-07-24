@@ -52,6 +52,23 @@ export interface SyncState {
   lastRunAt: string | null;
 }
 
+/** Keep configured sources visible even when an older on-disk index is loaded. */
+export function mergeConfiguredSourceSummaries(
+  existing: MagazineSourceSummary[]
+): MagazineSourceSummary[] {
+  const byId = new Map(existing.map((source) => [source.id, source]));
+  return MAGAZINE_SOURCES.map((source) => {
+    const stored = byId.get(source.id);
+    return {
+      id: source.id,
+      displayName: source.displayName,
+      levelHint: source.levelHint,
+      topic: source.topic,
+      issueCount: stored?.issueCount ?? 0,
+    };
+  });
+}
+
 async function ensureDirs() {
   await fs.mkdir(path.join(DATA_ROOT, 'issues'), { recursive: true });
   await fs.mkdir(path.join(DATA_ROOT, 'articles'), { recursive: true });
@@ -119,7 +136,11 @@ export async function loadIndex(): Promise<MagazineCatalogIndex> {
     })),
     issues: [],
   };
-  return readJsonFile(indexPath(), empty);
+  const index = await readJsonFile(indexPath(), empty);
+  return {
+    ...index,
+    sources: mergeConfiguredSourceSummaries(index.sources),
+  };
 }
 
 export async function saveIndex(index: MagazineCatalogIndex): Promise<void> {
