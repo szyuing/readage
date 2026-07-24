@@ -20,27 +20,33 @@ function utf16be(buf) {
 
 function repairLocalStorageJson(raw) {
   let s = raw.replace(/^\u0000+/, '').trimStart();
-  // Observed corruption: paragraph separators "," became \u001d•,"
+  // Observed corruption between string array items
   s = s.replace(/\u001d•,"/g, '","');
   s = s.replace(/\u001d•/g, '');
-  // Strip remaining illegal control chars (keep tab/LF/CR as spaces)
+  s = s.replace(/•,"/g, '","');
+  // Illegal control chars
   s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
   return s;
 }
 
+/**
+ * Walk the string and try to JSON.parse every top-level {...} blob.
+ * On failure, continue from next '{' after start+1 (does not require balanced close).
+ */
 function salvageObjects(s) {
   const objects = [];
-  let i = 0;
-  while (i < s.length) {
-    if (s[i] !== '{') {
-      i += 1;
-      continue;
-    }
+  const seen = new Set();
+  for (let start = 0; start < s.length; start++) {
+    if (s[start] !== '{') continue;
+    // Quick filter: only try objects that look like articles
+    const window = s.slice(start, start + 80);
+    if (!window.includes('"id"') && !window.includes('"content"')) continue;
+
     let depth = 0;
     let inStr = false;
     let esc = false;
-    const start = i;
-    for (; i < s.length; i++) {
+    let end = -1;
+    for (let i = start; i < s.length; i++) {
       const ch = s[i];
       if (inStr) {
         if (esc) {
@@ -62,19 +68,39 @@ function salvageObjects(s) {
       else if (ch === '}') {
         depth -= 1;
         if (depth === 0) {
-          const chunk = s.slice(start, i + 1);
-          try {
-            const obj = JSON.parse(chunk);
-            if (obj && obj.id && Array.isArray(obj.content)) objects.push(obj);
-          } catch {
-            // skip
-          }
-          i += 1;
+          end = i;
           break;
         }
       }
     }
-    if (depth !== 0) break;
+    if (end < 0) continue;
+    const chunk = s.slice(start, end + 1);
+    try {
+      const obj = JSON.parse(chunk);
+      if (obj && typeof obj.id === 'string' && Array.isArray(obj.content) && obj.content.length > 0) {
+        if (!seen.has(obj.id)) {
+          seen.add(obj.id);
+          objects.push(obj);
+        }
+      }
+    } catch {
+      // try light repair inside chunk
+      try {
+        const repaired = chunk
+          .replace(/\u001d•,"/g, '","')
+          .replace(/•,"/g, '","')
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ');
+        const obj = JSON.parse(repaired);
+        if (obj && typeof obj.id === 'string' && Array.isArray(obj.content) && obj.content.length > 0) {
+          if (!seen.has(obj.id)) {
+            seen.add(obj.id);
+            objects.push(obj);
+          }
+        }
+      } catch {
+        // skip
+      }
+    }
   }
   return objects;
 }
@@ -91,7 +117,7 @@ function needsEnrichment(a) {
   return !tc || !r;
 }
 
-let best = [];
+const byId = new Map();
 for await (const [k, v] of db.iterator()) {
   const key = k.toString('utf8').replace(/[^\x20-\x7E]/g, '.');
   if (!key.endsWith('english-ai:v2:articles')) continue;
@@ -102,30 +128,54 @@ for await (const [k, v] of db.iterator()) {
   ];
 
   for (const s of candidates) {
-    let parsed = null;
+    let list = [];
     try {
-      parsed = JSON.parse(s);
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) list = parsed;
     } catch {
-      parsed = salvageObjects(s);
+      list = salvageObjects(s);
     }
-    if (!Array.isArray(parsed)) continue;
-    const valid = parsed.filter((a) => a && a.id && Array.isArray(a.content));
-    console.log(key.slice(0, 60), 'got', valid.length, 'objects, rawLen', s.length);
-    if (valid.length > best.length) best = valid;
+    // Always also salvage to recover extra objects from partially-valid dumps
+    const salvaged = salvageObjects(s);
+    list = [...list, ...salvaged];
+
+    let added = 0;
+    for (const a of list) {
+      if (!a?.id || !Array.isArray(a.content) || a.content.length === 0) continue;
+      const prev = byId.get(a.id);
+      // Prefer the version with more enrichment / more content
+      if (!prev) {
+        byId.set(a.id, a);
+        added += 1;
+      } else {
+        const prevScore =
+          (Array.isArray(prev.paragraphTranslations) ? prev.paragraphTranslations.length : 0) +
+          (prev.levelRating?.summary ? 10 : 0) +
+          (prev.content?.length || 0);
+        const score =
+          (Array.isArray(a.paragraphTranslations) ? a.paragraphTranslations.length : 0) +
+          (a.levelRating?.summary ? 10 : 0) +
+          (a.content?.length || 0);
+        if (score > prevScore) byId.set(a.id, a);
+      }
+    }
+    console.log(key.slice(0, 70), 'parsed/salvaged batch', list.length, 'new', added, 'map', byId.size);
   }
 }
 
 await db.close();
 
+const best = [...byId.values()];
 fs.mkdirSync('local-data', { recursive: true });
 fs.writeFileSync('local-data/articles-from-edge.json', JSON.stringify(best));
-console.log('TOTAL articles', best.length);
+console.log('TOTAL unique articles', best.length);
 const incomplete = best.filter(needsEnrichment);
 console.log('incomplete', incomplete.length);
 for (const a of incomplete) {
   const n = (a.content || []).length;
   const t = a.paragraphTranslations;
-  const tc = Array.isArray(t) && t.length === n && t.every((x) => typeof x === 'string' && x.trim());
+  const tc =
+    Array.isArray(t) && t.length === n && t.every((x) => typeof x === 'string' && x.trim());
   console.log(
     '-',
     a.id,
