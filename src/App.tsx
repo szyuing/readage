@@ -67,6 +67,7 @@ import {
   type ReadingAssessmentResult,
 } from './components/ReadingAssessmentScreen';
 import {
+  buildCefrRecommendationProfile,
   normalizeUserReadingAssessment,
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
@@ -183,6 +184,10 @@ export default function App() {
   );
   const userCefrLevel = useMemo(
     () => resolveUserCefrLevel(assessmentResult),
+    [assessmentResult]
+  );
+  const cefrRecommendationProfile = useMemo(
+    () => buildCefrRecommendationProfile(assessmentResult),
     [assessmentResult]
   );
   const [isRecommending, setIsRecommending] = useState(false);
@@ -693,6 +698,7 @@ export default function App() {
         library,
         history,
         userLevel: userCefrLevel,
+        cefrProfile: cefrRecommendationProfile,
         useFullCatalog: true,
         onPhase: (phase) => {
           setRecommendPhase(phase === 'ai' ? 'ai' : 'local');
