@@ -3,7 +3,7 @@
  *
  * Strategy D: callers store/open articles immediately; this queue enriches
  * them in the background. Multiple articles can be enqueued and up to
- * ARTICLE_CONCURRENCY (default 3) run at the same time.
+ * ARTICLE_CONCURRENCY (default 50) run at the same time.
  */
 
 import type { Article } from '../../types';
@@ -30,9 +30,10 @@ export type ImportJobSource =
 
 /**
  * Max articles enriching at the same time.
- * Stay at 2 so paragraph-pool workers + rating stay under Step's ~10 concurrency.
+ * DeepSeek Flash supports 2500 account-level requests; product target is 50 articles.
  */
-export const ARTICLE_IMPORT_CONCURRENCY = 2;
+export const ARTICLE_IMPORT_CONCURRENCY = 50;
+export const ARTICLE_IMPORT_MAX_CONCURRENCY = 50;
 
 /**
  * Hard cap per job. Without this, a hung LLM call leaves the banner stuck forever
@@ -93,7 +94,7 @@ export interface ArticleImportQueueOptions {
   /** Injected for tests. */
   fetcher?: typeof fetch;
   targetLanguage?: string;
-  /** Override article concurrency (default ARTICLE_IMPORT_CONCURRENCY = 3). */
+  /** Override article concurrency (default ARTICLE_IMPORT_CONCURRENCY = 50). */
   concurrency?: number;
   /**
    * Called when a job finishes successfully so the host can merge into history.
@@ -134,7 +135,7 @@ export class ArticleImportQueue {
 
   get concurrency(): number {
     const n = this.options.concurrency ?? ARTICLE_IMPORT_CONCURRENCY;
-    return Math.max(1, Math.min(8, Math.floor(n)));
+    return Math.max(1, Math.min(ARTICLE_IMPORT_MAX_CONCURRENCY, Math.floor(n)));
   }
 
   subscribe(listener: ImportQueueListener): () => void {

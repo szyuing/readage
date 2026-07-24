@@ -11,7 +11,8 @@
         "clean": "node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true});fs.rmSync('server.js',{force:true})\"",
         "lint": "tsc --noEmit",
         "test": "tsx --test tests/*.test.ts",
-        "test:10k": "tsx --test tests/articleImportEnrichment.10k.test.ts"
+        "test:10k": "tsx --test tests/articleImportEnrichment.10k.test.ts",
+        "enrich:magazines": "node scripts/enrich-all-magazines.mjs"
     },
     "dependencies": {
         "@google/genai": "^2.4.0",

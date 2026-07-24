@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ScreenType,
   Article,
   LearningEvent,
   ArticleSession,
@@ -56,7 +55,7 @@ import {
   type ImportJobSource,
 } from './lib/articleImport';
 import { buildIntentionalLevelRating } from './lib/articleLevel';
-import { HomeScreen } from './components/HomeScreen';
+import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
 import { ReadingScreen } from './components/ReadingScreen';
 import { MyLearningScreen } from './components/MyLearningScreen';
 import { HistoryScreen } from './components/HistoryScreen';
@@ -71,7 +70,8 @@ import {
   normalizeUserReadingAssessment,
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
-import { LayoutGrid, BookOpen, BarChart3, History, Library, ClipboardCheck, Sparkles } from 'lucide-react';
+import { buildAppPath, parseAppPath, type AppRoute } from './lib/appRoutes';
+import { BookOpen, BarChart3, History, Library, ClipboardCheck, Sparkles } from 'lucide-react';
 import {
   useDueWords,
   useProficiencyStats,
@@ -112,6 +112,15 @@ type RecommendationContext = {
   reviewWords: string[];
 };
 
+type NavigationOptions = {
+  replace?: boolean;
+};
+
+function getInitialAppRoute(): AppRoute {
+  if (typeof window === 'undefined') return { kind: 'recommendation' };
+  return parseAppPath(window.location.pathname);
+}
+
 function logRecommendationSource(
   source: RecommendationSource,
   title: string,
@@ -147,22 +156,16 @@ function logRecommendationSource(
 
 export default function App() {
   const builtInLibrary = LIBRARY_ARTICLES;
+  const [route, setRoute] = useState<AppRoute>(getInitialAppRoute);
+  const recommendationEntryStartedRef = useRef(false);
   const [magazinePool, setMagazinePool] = useState<Article[]>(() =>
     getCachedMagazineRecommendationPool()
-  );
-  const [currentScreen, setCurrentScreen] = usePersistentState<ScreenType>(
-    STORAGE_KEYS.currentScreen,
-    'home'
   );
   const [history, setHistory] = usePersistentState<Article[]>(STORAGE_KEYS.history, []);
   const [sessions, setSessions] = usePersistentState<Record<string, ArticleSession>>(
     STORAGE_KEYS.sessions,
     {},
     normalizeArticleSessions
-  );
-  const [activeArticleId, setActiveArticleId] = usePersistentState<string>(
-    STORAGE_KEYS.activeArticleId,
-    ''
   );
   // Memory V2.2: 使用 Hooks 替代 proficiency 状态
   const { dueWords, loading: dueWordsLoading } = useDueWords();
@@ -207,6 +210,32 @@ export default function App() {
   );
   const [showEnterArticle, setShowEnterArticle] = useState(false);
   const importQueueSnapshot = useArticleImportQueue();
+
+  const navigate = (nextRoute: AppRoute, options: NavigationOptions = {}) => {
+    const nextPath = buildAppPath(nextRoute);
+    if (typeof window !== 'undefined' && window.location.pathname !== nextPath) {
+      const method = options.replace ? 'replaceState' : 'pushState';
+      window.history[method]({}, '', nextPath);
+    }
+    setRoute(nextRoute);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setRoute(parseAppPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const canonicalPath = buildAppPath(route);
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState({}, '', canonicalPath);
+    }
+    // Canonicalize only the initial deep link; later navigations use navigate().
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [reviewClock, setReviewClock] = useState(() => Date.now());
 
@@ -342,30 +371,127 @@ export default function App() {
   }, [setHistory]);
 
   /**
-   * Resume incomplete enrichment after reload (store-first model).
-   * Completes any history article missing 译文 and/or official CEFR 评级
-   * (including previously failed jobs) via step-3.7-flash translate + rate.
+   * 1) Merge offline backfill results (scripts/run-backfill.mjs → /api/import/backfill-results)
+   * 2) Resume any remaining incomplete enrichment via the import queue
+   *    (skipped while server reports /api/import/pause).
    */
   useEffect(() => {
-    const pending = history.filter((a) => needsImportEnrichment(a));
-    if (pending.length === 0) return;
+    let cancelled = false;
 
-    // Clear failed markers so UI shows "processing" while resume runs.
-    setHistory((previous) =>
-      previous.map((item) =>
-        needsImportEnrichment(item)
-          ? {
-              ...item,
-              importEnrichmentStatus: 'pending',
-              importEnrichmentError: undefined,
-            }
-          : item
-      )
-    );
-    const n = getArticleImportQueue().resumePending(pending);
-    if (n > 0) {
-      console.log(`[import] resume ${n} article(s) missing translation and/or rating`);
-    }
+    const isGoodTranslation = (t: unknown) =>
+      typeof t === 'string'
+      && t.trim().length > 0
+      && !t.includes('翻译失败')
+      && !t.includes('翻译为空');
+
+    const mergeBackfillAndResume = async () => {
+      try {
+        const res = await fetch('/api/import/backfill-results');
+        if (res.ok) {
+          const data = (await res.json()) as {
+            ok?: boolean;
+            results?: Array<{
+              id: string;
+              paragraphTranslations?: string[];
+              levelRating?: Article['levelRating'];
+              level?: string;
+              importEnrichmentStatus?: Article['importEnrichmentStatus'];
+            }>;
+          };
+          const results = Array.isArray(data.results) ? data.results : [];
+          if (results.length > 0 && !cancelled) {
+            const byId = new Map(results.map((r) => [r.id, r]));
+            setHistory((previous) => {
+              let changed = 0;
+              const next = previous.map((item) => {
+                const patch = byId.get(item.id);
+                if (!patch) return item;
+                const n = item.content?.length ?? 0;
+                const patchT = patch.paragraphTranslations;
+                const patchTOk =
+                  Array.isArray(patchT)
+                  && patchT.length === n
+                  && patchT.every(isGoodTranslation);
+                // Only apply good patches; never clobber with failed placeholders.
+                if (!patchTOk && !patch.levelRating?.summary) return item;
+                if (!needsImportEnrichment(item) && !patchTOk) return item;
+                changed += 1;
+                return {
+                  ...item,
+                  paragraphTranslations: patchTOk
+                    ? patchT
+                    : item.paragraphTranslations,
+                  levelRating: patch.levelRating || item.levelRating,
+                  level: patch.level || item.level,
+                  importEnrichmentStatus:
+                    patchTOk && (patch.levelRating?.summary || item.levelRating?.summary)
+                      ? 'ready'
+                      : item.importEnrichmentStatus,
+                  importEnrichmentError: undefined,
+                };
+              });
+              if (changed > 0) {
+                console.log(`[import] merged ${changed} backfill result(s)`);
+              }
+              return changed > 0 ? next : previous;
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('[import] backfill merge skipped', error);
+      }
+
+      if (cancelled) return;
+
+      // Server-side backfill can pause client queue so Step concurrency is free.
+      try {
+        const pauseRes = await fetch('/api/import/pause');
+        if (pauseRes.ok) {
+          const pause = (await pauseRes.json()) as { paused?: boolean; reason?: string };
+          if (pause.paused) {
+            console.log('[import] client resume paused:', pause.reason || 'server backfill');
+            getArticleImportQueue().cancelAll();
+            return;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      if (cancelled) return;
+
+      setHistory((previous) => {
+        const pending = previous.filter((a) => needsImportEnrichment(a));
+        if (pending.length === 0) return previous;
+
+        const marked = previous.map((item) =>
+          needsImportEnrichment(item)
+            ? {
+                ...item,
+                importEnrichmentStatus: 'pending' as const,
+                importEnrichmentError: undefined,
+              }
+            : item
+        );
+        queueMicrotask(() => {
+          if (cancelled) return;
+          const n = getArticleImportQueue().resumePending(
+            marked.filter((a) => needsImportEnrichment(a))
+          );
+          if (n > 0) {
+            console.log(
+              `[import] resume ${n} article(s) missing translation and/or rating`
+            );
+          }
+        });
+        return marked;
+      });
+    };
+
+    void mergeBackfillAndResume();
+    return () => {
+      cancelled = true;
+    };
     // Only on mount — history is loaded sync from localStorage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -399,12 +525,13 @@ export default function App() {
     updateRecommendationFeed(createInactiveRecommendationFeed());
   };
 
+  const routedArticleId = route.kind === 'reading' ? route.articleId : '';
   const activeArticle = useMemo(
-    () => history.find((article) => article.id === activeArticleId)
-      || recommendationLibrary.find((article) => article.id === activeArticleId)
-      || builtInLibrary.find((article) => article.id === activeArticleId)
+    () => history.find((article) => article.id === routedArticleId)
+      || recommendationLibrary.find((article) => article.id === routedArticleId)
+      || builtInLibrary.find((article) => article.id === routedArticleId)
       || null,
-    [activeArticleId, history, recommendationLibrary, builtInLibrary]
+    [routedArticleId, history, recommendationLibrary, builtInLibrary]
   );
 
   // Memory V2.2: 使用 Hooks 数据
@@ -536,8 +663,7 @@ export default function App() {
     if (open) {
       if (!options?.preserveRecommendationFeed) resetRecommendationFeed();
       touchSession(withMeta.id, (session) => ({ ...session, lastOpenedAt: openedAt }));
-      setActiveArticleId(withMeta.id);
-      setCurrentScreen('reading');
+      navigate({ kind: 'reading', articleId: withMeta.id });
       pushEvent('article_open', { articleId: withMeta.id });
     }
 
@@ -770,8 +896,6 @@ export default function App() {
     setRecommendPhase(null);
     recommendationContextRef.current = null;
     updateRecommendationFeed(endRecommendationFeed(state));
-    setActiveArticleId('');
-    setCurrentScreen('reading');
   };
 
   const startRecommendationReading = async (topic: string, reviewWords: string[]) => {
@@ -842,11 +966,31 @@ export default function App() {
     );
   };
 
+  const startRecommendationFromEntry = () => {
+    if (isRecommending) return;
+    recommendationEntryStartedRef.current = true;
+    void startRecommendationReading(
+      'English Idioms & Daily Practice',
+      dueLemmas.slice(0, 5)
+    );
+  };
+
+  useEffect(() => {
+    if (route.kind !== 'recommendation' || recommendationEntryStartedRef.current) return;
+    recommendationEntryStartedRef.current = true;
+    void startRecommendationReading(
+      'English Idioms & Daily Practice',
+      dueLemmas.slice(0, 5)
+    );
+    // The recommendation entry starts once per explicit visit to `/`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.kind]);
+
   const handleRecommendationAdvance = (payload: ReadingAdvancePayload) => {
     const current = recommendationFeedRef.current;
     if (
       current.status !== 'active'
-      || activeArticleId !== payload.articleId
+      || routedArticleId !== payload.articleId
       || !current.seenArticleIds.includes(payload.articleId)
       || recommendationAdvancedArticleIdsRef.current.has(payload.articleId)
     ) return;
@@ -984,18 +1128,22 @@ export default function App() {
     && activeArticle
     && recommendationFeed.seenArticleIds.includes(activeArticle.id)
   );
-  const returnHome = () => {
+  const goToRecommendation = () => {
+    recommendationEntryStartedRef.current = false;
     resetRecommendationFeed();
-    setCurrentScreen('home');
+    navigate({ kind: 'recommendation' });
+    if (route.kind === 'recommendation') {
+      startRecommendationFromEntry();
+    }
   };
-
+  const returnHome = goToRecommendation;
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col">
       <div className="bg-[#EFECE3] border-b border-[#E0DBCF] px-4 py-2 flex items-center justify-between text-xs font-medium text-[#5B544C]">
         <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
           {(
             [
-              { id: 'home' as const, label: 'P1', icon: LayoutGrid },
+              { id: 'recommendation' as const, label: 'Recommend', icon: Sparkles },
               { id: 'library' as const, label: 'Library', icon: Library },
               { id: 'reading' as const, label: 'P2', icon: BookOpen },
               { id: 'assessment' as const, label: '测试', icon: ClipboardCheck },
@@ -1008,19 +1156,21 @@ export default function App() {
               aria-label={label}
               title={label}
               onClick={() => {
-                if (
-                  id === 'reading'
-                  && !activeArticle
-                  && recommendationFeed.status !== 'ended'
-                ) {
-                  returnHome();
+                if (id === 'recommendation') {
+                  goToRecommendation();
                   return;
                 }
-                if (id !== 'reading') resetRecommendationFeed();
-                setCurrentScreen(id);
+                if (id === 'reading') {
+                  if (route.kind !== 'reading' && activeArticle) {
+                    navigate({ kind: 'reading', articleId: activeArticle.id });
+                  }
+                  return;
+                }
+                resetRecommendationFeed();
+                navigate({ kind: id });
               }}
               className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 shrink-0 ${
-                currentScreen === id
+                route.kind === id
                   ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
                   : 'hover:bg-[#E4DFD5]'
               }`}
@@ -1092,23 +1242,26 @@ export default function App() {
       )}
 
       <div className="flex-1">
-        {currentScreen === 'home' && (
-          <HomeScreen
-            onEnterArticle={() => setShowEnterArticle(true)}
-            onPickFromLibrary={() => setCurrentScreen('library')}
-            onRecommendForMe={handleRecommendForMe}
-            onGoToLearning={() => setCurrentScreen('learning')}
-            onStartTargetedReview={handleStartTargetedReview}
-            onStartEnglishTest={() => setCurrentScreen('assessment')}
-            pendingReviewCount={dueLemmas.length}
-            assessedBand={assessmentResult?.recommendedBand ?? null}
-            hasAssessment={Boolean(assessmentResult)}
+        {route.kind === 'recommendation' && (
+          <RecommendationEntryScreen
+            isLoading={isRecommending}
+            phase={recommendPhase}
+            feedEnded={recommendationFeed.status === 'ended'}
+            onStartRecommendation={startRecommendationFromEntry}
+            onOpenLibrary={() => {
+              resetRecommendationFeed();
+              navigate({ kind: 'library' });
+            }}
+            onStartAssessment={() => {
+              resetRecommendationFeed();
+              navigate({ kind: 'assessment' });
+            }}
           />
         )}
 
-        {currentScreen === 'assessment' && (
+        {route.kind === 'assessment' && (
           <ReadingAssessmentScreen
-            onBack={() => setCurrentScreen('home')}
+            onBack={goToRecommendation}
             previousResult={assessmentResult}
             onComplete={(result) => {
               setAssessmentResult(result);
@@ -1125,7 +1278,7 @@ export default function App() {
           />
         )}
 
-        {currentScreen === 'library' && (
+        {route.kind === 'library' && (
           <LibraryScreen
             userArticles={userArticles}
             userCefrLevel={userCefrLevel}
@@ -1137,11 +1290,11 @@ export default function App() {
               })
             }
             onInsertArticle={() => setShowEnterArticle(true)}
-            onBack={() => setCurrentScreen('home')}
+            onBack={goToRecommendation}
           />
         )}
 
-        {currentScreen === 'reading' && activeArticle && (
+        {route.kind === 'reading' && activeArticle && (
           <ReadingScreen
             key={activeArticle.id}
             article={activeArticle}
@@ -1177,7 +1330,7 @@ export default function App() {
           />
         )}
 
-        {currentScreen === 'reading' && recommendationFeed.status === 'ended' && (
+        {route.kind === 'reading' && !activeArticle && recommendationFeed.status === 'ended' && (
           <div className="min-h-[60vh] px-6 py-16 flex items-center justify-center text-center">
             <div className="max-w-sm">
               <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-[#EFEAE0] text-[#C35E37]">
@@ -1198,7 +1351,7 @@ export default function App() {
           </div>
         )}
 
-        {currentScreen === 'reading' && !activeArticle && recommendationFeed.status !== 'ended' && (
+        {route.kind === 'reading' && !activeArticle && recommendationFeed.status !== 'ended' && (
           <div className="p-12 text-center text-[#666]">
             <p className="mb-4">还没有打开文章，请先从首页或文库选择一篇文章。</p>
             <button
@@ -1210,15 +1363,15 @@ export default function App() {
           </div>
         )}
 
-        {currentScreen === 'learning' && (
+        {route.kind === 'learning' && (
           <MyLearningScreen
-            onBack={() => setCurrentScreen('home')}
+            onBack={goToRecommendation}
             onStartTargetedReview={handleStartTargetedReview}
             onOpenArticle={(id) => {
               const art = history.find((a) => a.id === id);
               if (art) ingestArticle(art, { open: true, source: 'history' });
             }}
-            onStartEnglishTest={() => setCurrentScreen('assessment')}
+            onStartEnglishTest={() => navigate({ kind: 'assessment' })}
             onStartRecommendedReading={handleRecommendForMe}
             assessedBand={assessmentResult?.recommendedBand ?? null}
             assessmentCompletedAt={assessmentResult?.completedAt ?? null}
@@ -1234,14 +1387,14 @@ export default function App() {
           />
         )}
 
-        {currentScreen === 'history' && (
+        {route.kind === 'history' && (
           <HistoryScreen
             articles={history}
             sessions={sessions}
             onSelectArticle={(article) =>
               ingestArticle(article, { open: true, source: 'history' })
             }
-            onBack={() => setCurrentScreen('home')}
+            onBack={goToRecommendation}
           />
         )}
       </div>

@@ -35,6 +35,7 @@ import { needsImportEnrichment } from '../lib/articleImport';
 import { classifyArticleParagraph } from '../lib/articlePresentation';
 import {
   buildReadingAdvancePayload,
+  canAutoAdvanceAtScrollEnd,
   countArticleWords,
   isLeftSwipeGesture,
   minDwellMsBeforeAutoAdvance,
@@ -150,10 +151,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const onAdvanceRef = useRef(onAdvance);
   const hasAdvancedRef = useRef(false);
   const suppressNextWordClickRef = useRef(false);
-  const rightSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  /** Wall-clock when the current article became active — gates auto-advance. */
+  /** Wall-clock when the current article became active - gates auto-advance. */
   const articleOpenedAtRef = useRef(Date.now());
+  const recommendationDwellMs = minDwellMsBeforeAutoAdvance(countArticleWords(article.content));
 
   useEffect(() => {
     return () => {
@@ -203,7 +204,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (!container || typeof IntersectionObserver === 'undefined') return;
 
     let isActive = true;
-    let autoAdvanceTimer: number | null = null;
     const visibleParagraphs = new Set<Element>();
     const completedParagraphs = new Set<Element>();
     const exposureTimers = new Map<Element, number>();
@@ -216,41 +216,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       exposureTimers.delete(paragraph);
     };
 
-    const clearAutoAdvanceTimer = () => {
-      if (autoAdvanceTimer === null) return;
-      window.clearTimeout(autoAdvanceTimer);
-      autoAdvanceTimer = null;
-    };
-
-    const finishReading = () => {
-      if (!isActive || hasAdvancedRef.current) return;
+    const finishSingleReading = () => {
+      if (!isActive || hasAdvancedRef.current || mode === 'recommendation-feed') return;
       hasAdvancedRef.current = true;
-      clearAutoAdvanceTimer();
-      if (mode === 'recommendation-feed') {
-        onAdvanceRef.current?.(
-          buildReadingAdvancePayload(article.id, 'completed', exposedLemmasRef.current)
-        );
-      } else {
-        onReadingCompleteRef.current?.();
-      }
-    };
-
-    const scheduleFinishReading = () => {
-      if (!isActive || hasAdvancedRef.current || autoAdvanceTimer !== null) return;
-      if (mode !== 'recommendation-feed') {
-        finishReading();
-        return;
-      }
-      // Prevent short on-screen articles from auto-skipping after ~800ms.
-      const wordCount = countArticleWords(article.content);
-      const minDwell = minDwellMsBeforeAutoAdvance(wordCount);
-      const elapsed = Date.now() - articleOpenedAtRef.current;
-      const remaining = Math.max(0, minDwell - elapsed);
-      if (remaining > 0) {
-        autoAdvanceTimer = window.setTimeout(finishReading, remaining);
-      } else {
-        finishReading();
-      }
+      onReadingCompleteRef.current?.();
     };
 
     const observer = new IntersectionObserver(
@@ -308,11 +277,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               onExposuresRef.current?.(newWordIds);
             }
             if (
-              paragraphs.length > 0
+              mode === 'single'
+              && paragraphs.length > 0
               && completedParagraphs.size === paragraphs.length
-              && !hasAdvancedRef.current
             ) {
-              scheduleFinishReading();
+              finishSingleReading();
             }
           }, 800);
 
@@ -350,17 +319,77 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       observer.disconnect();
       pauseExposureTracking();
-      clearAutoAdvanceTimer();
       completedParagraphs.clear();
     };
     // The exposure set intentionally resets only when the article lifecycle changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id, mode]);
 
+  // Recommendation pages advance when the reader explicitly reaches the end.
+  // Paragraph visibility still records exposure, but never changes the article
+  // before the reader has scrolled through it.
+  useEffect(() => {
+    if (mode !== 'recommendation-feed') return;
+
+    let ticking = false;
+    let dwellTimer: number | null = null;
+    const checkScrollEnd = () => {
+      ticking = false;
+      if (hasAdvancedRef.current || document.visibilityState !== 'visible') return;
+      const scroller = document.scrollingElement || document.documentElement;
+      const coordinates = {
+        scrollTop: scroller.scrollTop,
+        clientHeight: scroller.clientHeight,
+        scrollHeight: scroller.scrollHeight,
+      };
+      const elapsedMs = Date.now() - articleOpenedAtRef.current;
+      const isAtScrollEnd = coordinates.scrollHeight > coordinates.clientHeight
+        && coordinates.scrollTop + coordinates.clientHeight >= coordinates.scrollHeight - 48;
+      if (!isAtScrollEnd) return;
+      if (!canAutoAdvanceAtScrollEnd(coordinates, elapsedMs, recommendationDwellMs)) {
+        const remainingMs = Math.max(0, recommendationDwellMs - elapsedMs);
+        if (dwellTimer === null && remainingMs > 0) {
+          dwellTimer = window.setTimeout(() => {
+            dwellTimer = null;
+            checkScrollEnd();
+          }, remainingMs);
+        }
+        return;
+      }
+
+      hasAdvancedRef.current = true;
+      onAdvanceRef.current?.(
+        buildReadingAdvancePayload(article.id, 'completed', exposedLemmasRef.current)
+      );
+    };
+    const handleScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(checkScrollEnd);
+    };
+
+    // Capture catches browsers that dispatch scrolling on the document's
+    // scrolling element instead of window. touchend covers short final drags.
+    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('wheel', handleScroll, { passive: true });
+    window.addEventListener('touchend', handleScroll, { passive: true });
+    return () => {
+      document.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('wheel', handleScroll);
+      window.removeEventListener('touchend', handleScroll);
+      if (dwellTimer !== null) window.clearTimeout(dwellTimer);
+    };
+  }, [article.id, mode, recommendationDwellMs]);
+
   const highlightTerms = [
     ...(article.keyWords || []),
     ...(article.embeddedReviewWords || []),
   ];
+  const reviewWords: string[] = Array.from(
+    new Set((article.embeddedReviewWords || []).map((word) => word.trim()).filter(Boolean)),
+  );
 
   const closeWordCard = useCallback(() => {
     wordCardAbortRef.current?.abort();
@@ -848,11 +877,49 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           </div>
         )}
 
-        {article.embeddedReviewWords && article.embeddedReviewWords.length > 0 && (
-          <div className="mb-4 p-3 bg-[#FEF3C7] border border-[#FDE68A] rounded-xl text-xs text-[#92400E]">
-            <span className="font-semibold">语境复习词：</span>
-            {article.embeddedReviewWords.join(' · ')}
-          </div>
+        {reviewWords.length > 0 && (
+          <section className="review-word-strip mb-7" aria-labelledby="review-word-strip-title">
+            <div className="mb-2 flex items-center justify-between gap-3 px-1">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="review-word-strip__icon" aria-hidden="true">
+                  <BookOpen className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 id="review-word-strip-title" className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#6B645B]">
+                    Focus words
+                  </h2>
+                  <p className="text-[11px] text-[#9A9185]">{reviewWords.length} in this article</p>
+                </div>
+              </div>
+              <span className="hidden shrink-0 text-[11px] font-medium text-[#A59C90] sm:inline">
+                Vocabulary set
+              </span>
+            </div>
+            <div className="review-word-strip__viewport">
+              <div className="review-word-strip__fade review-word-strip__fade--left" aria-hidden="true" />
+              <ul className="review-word-strip__track" aria-label="Review words">
+                {reviewWords.map((word) => (
+                  <li key={word} className="shrink-0">
+                    <button
+                      type="button"
+                      className="review-word-chip"
+                      onClick={() => {
+                        const context = article.content.find((paragraph) =>
+                          paragraph.toLowerCase().includes(word.toLowerCase()),
+                        ) || article.content[0] || '';
+                        onWordClick?.(word);
+                        void openWordCard(word, context);
+                      }}
+                    >
+                      <span className="review-word-chip__dot" aria-hidden="true" />
+                      <span>{word}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="review-word-strip__fade review-word-strip__fade--right" aria-hidden="true" />
+            </div>
+          </section>
         )}
 
         {(importJob?.status === 'queued'

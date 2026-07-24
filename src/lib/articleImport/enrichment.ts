@@ -50,9 +50,9 @@ export const IMPORT_LIMITS = {
   MAX_RATING_CHARS: 120_000,
   /**
    * Paragraph-level concurrency when article is > 120k chars (or full-translate fails).
-   * Product rule: default is full-article one-shot; only oversized → 4-way segment pool.
+   * Product rule: default is full-article one-shot; only oversized -> 2-way segment pool.
    */
-  TRANSLATE_CONCURRENCY: 4,
+  TRANSLATE_CONCURRENCY: 2,
   /**
    * Full article in ONE LLM call when total characters ≤ this limit (12 万字).
    * Must stay ≤ tutorValidation paragraphs/articleContext budget (120_000).
@@ -252,6 +252,15 @@ function alignTranslationsToSourceParagraphs(
 type EnrichableArticle = Pick<Article, 'content'> &
   Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel'>>;
 
+function isUsableTranslation(t: unknown): boolean {
+  return (
+    typeof t === 'string'
+    && t.trim().length > 0
+    && !t.includes('翻译失败')
+    && !t.includes('翻译为空')
+  );
+}
+
 /** True when every source paragraph has a non-empty Chinese translation. */
 export function hasCompleteParagraphTranslations(
   article: Pick<Article, 'content'> & Partial<Pick<Article, 'paragraphTranslations'>>
@@ -262,7 +271,7 @@ export function hasCompleteParagraphTranslations(
   return (
     Array.isArray(translations)
     && translations.length === n
-    && translations.every((t) => typeof t === 'string' && t.trim().length > 0)
+    && translations.every(isUsableTranslation)
   );
 }
 
@@ -549,7 +558,7 @@ async function runRating(
 
 /**
  * Import enrichment: translation + CEFR rating.
- * - Default: full-article translate (≤120k chars); else 4-way paragraph pool.
+ * - Default: full-article translate (≤120k chars); else 2-way paragraph pool.
  * - Translate and rate run **in parallel** when both are needed (rating uses English source).
  * - Article-level queue concurrency is independent (queue.ts).
  */
@@ -564,7 +573,7 @@ export async function enrichArticleOnImport(
     skipRating?: boolean;
     /**
      * Override paragraph-pool concurrency
-     * (default 4 when >120k chars or full-article translate fails).
+     * (default 2 when >120k chars or full-article translate fails).
      */
     translateConcurrency?: number;
     /** Force fallback paragraph pool (skip full-article path). */
