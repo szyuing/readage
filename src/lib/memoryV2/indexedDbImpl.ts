@@ -425,71 +425,415 @@ export class IndexedDbMemoryStorage implements MemoryStorage {
 }
 
 const LS_PREFIX = 'english-ai:v2:memory';
+const LEGACY_PROFICIENCY_KEY = 'english-ai:v2:proficiency';
 const MIGRATION_META_KEY = 'localStorageMigratedV1';
 
-/**
- * One-time import of legacy localStorage Memory keys into IndexedDB.
- * Leaves original keys in place until a future cleanup pass.
- */
-export async function migrateLocalStorageToIndexedDb(
-  target: IndexedDbMemoryStorage
-): Promise<{ migrated: boolean; importedKeys: number }> {
-  if (typeof localStorage === 'undefined') {
-    return { migrated: false, importedKeys: 0 };
+export type LocalStorageMigrationStatus =
+  | 'in-progress'
+  | 'completed'
+  | 'legacy-unverified';
+
+export interface LocalStorageMigrationState {
+  version: 1;
+  /** This marker covers Memory V2 localStorage records only. */
+  scope: 'memory-v2-local-storage';
+  status: LocalStorageMigrationStatus;
+  scannedKeys: number;
+  importedKeys: number;
+  verifiedKeys: number;
+  failedKeys: number;
+  /** Legacy proficiency needs a separately specified business migration. */
+  legacyProficiency: 'not-found' | 'pending-explicit-migration';
+}
+
+export interface LocalStorageMigrationResult {
+  migrated: boolean;
+  importedKeys: number;
+  verifiedKeys: number;
+  failedKeys: number;
+  completed: boolean;
+  /** Whether IndexedDB can safely become the active storage for this run. */
+  usable: boolean;
+}
+
+/** Narrow target contract keeps migration testable without opening IndexedDB. */
+export interface LocalStorageMigrationTarget {
+  setMeta(key: string, value: unknown): Promise<void>;
+  getMeta<T>(key: string): Promise<T | null>;
+  saveRawEvents(events: RawWordEvent[]): Promise<void>;
+  getRawEventsByDate(
+    userId: string,
+    wordId: string,
+    localDate: string
+  ): Promise<RawWordEvent[]>;
+  saveArticleEvidence(evidence: ArticleWordEvidence): Promise<void>;
+  getArticleEvidence(
+    userId: string,
+    wordId: string,
+    articleId: string,
+    localDate: string
+  ): Promise<ArticleWordEvidence | null>;
+  saveDailyEvidence(evidence: DailyWordEvidence): Promise<void>;
+  getDailyEvidence(
+    userId: string,
+    wordId: string,
+    localDate: string
+  ): Promise<DailyWordEvidence | null>;
+  saveMemoryState(state: WordMemoryState): Promise<void>;
+  getMemoryState(userId: string, wordId: string): Promise<WordMemoryState | null>;
+  createFinalizationTask(task: FinalizationTask): Promise<void>;
+  getPendingFinalizationTasks(userId: string): Promise<FinalizationTask[]>;
+}
+
+type MigrationItem =
+  | { kind: 'raw'; value: RawWordEvent[] }
+  | { kind: 'article'; value: ArticleWordEvidence }
+  | { kind: 'daily'; value: DailyWordEvidence }
+  | { kind: 'state'; value: WordMemoryState }
+  | { kind: 'task'; value: FinalizationTask };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isMigrationCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isMigrationState(value: unknown): value is LocalStorageMigrationState {
+  if (!isRecord(value)) return false;
+  return (
+    value.version === 1 &&
+    value.scope === 'memory-v2-local-storage' &&
+    (value.status === 'in-progress' ||
+      value.status === 'completed' ||
+      value.status === 'legacy-unverified') &&
+    (value.legacyProficiency === 'not-found' ||
+      value.legacyProficiency === 'pending-explicit-migration') &&
+    isMigrationCount(value.scannedKeys) &&
+    isMigrationCount(value.importedKeys) &&
+    isMigrationCount(value.verifiedKeys) &&
+    isMigrationCount(value.failedKeys)
+  );
+}
+
+function isCompletedMigrationState(value: unknown): value is LocalStorageMigrationState {
+  return (
+    isMigrationState(value) &&
+    value.status === 'completed' &&
+    value.failedKeys === 0 &&
+    value.importedKeys === value.scannedKeys &&
+    value.verifiedKeys === value.scannedKeys
+  );
+}
+
+function isLegacyUnverifiedMigrationState(
+  value: unknown
+): value is LocalStorageMigrationState {
+  return (
+    isMigrationState(value) &&
+    value.status === 'legacy-unverified' &&
+    value.scannedKeys === 0 &&
+    value.importedKeys === 0 &&
+    value.verifiedKeys === 0 &&
+    value.failedKeys === 0
+  );
+}
+
+function hasStrings(value: unknown, fields: string[]): value is Record<string, unknown> {
+  return isRecord(value) && fields.every((field) => typeof value[field] === 'string');
+}
+
+function parseMigrationItem(key: string, value: unknown): MigrationItem | null {
+  if (key.includes(':raw:') && !key.includes(':raw-index:')) {
+    if (
+      !Array.isArray(value) ||
+      !value.every((event) =>
+        hasStrings(event, [
+          'userId',
+          'wordId',
+          'articleId',
+          'occurrenceId',
+          'eventType',
+          'occurredAt',
+          'localDate',
+        ])
+      )
+    ) {
+      throw new Error('Invalid raw event record');
+    }
+    return { kind: 'raw', value: value as unknown as RawWordEvent[] };
+  }
+  if (key.includes(':article:') && !key.includes(':article-index:')) {
+    if (!hasStrings(value, ['userId', 'wordId', 'articleId', 'localDate'])) {
+      throw new Error('Invalid article evidence record');
+    }
+    return { kind: 'article', value: value as unknown as ArticleWordEvidence };
+  }
+  if (key.includes(':daily:') && !key.includes(':daily-index:')) {
+    if (!hasStrings(value, ['userId', 'wordId', 'localDate'])) {
+      throw new Error('Invalid daily evidence record');
+    }
+    return { kind: 'daily', value: value as unknown as DailyWordEvidence };
+  }
+  if (key.includes(':state:') && !key.includes(':state-index:')) {
+    if (!hasStrings(value, ['userId', 'wordId', 'nextReview'])) {
+      throw new Error('Invalid memory state record');
+    }
+    return { kind: 'state', value: value as unknown as WordMemoryState };
+  }
+  if (key.includes(':task:') && !key.includes(':task-index:')) {
+    if (!hasStrings(value, ['userId', 'localDate', 'createdAt'])) {
+      throw new Error('Invalid finalization task record');
+    }
+    return { kind: 'task', value: value as unknown as FinalizationTask };
+  }
+  return null;
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function rawEventKey(event: RawWordEvent): string {
+  return [
+    event.userId,
+    event.wordId,
+    event.articleId,
+    event.occurrenceId,
+    event.eventType,
+    event.occurredAt,
+    event.localDate,
+  ].join('\u0000');
+}
+
+async function importAndVerifyItem(
+  target: LocalStorageMigrationTarget,
+  item: MigrationItem
+): Promise<void> {
+  if (item.kind === 'raw') {
+    if (item.value.length === 0) return;
+    const sample = item.value[0];
+    if (
+      !item.value.every(
+        (event) =>
+          event.userId === sample.userId &&
+          event.wordId === sample.wordId &&
+          event.localDate === sample.localDate
+      )
+    ) {
+      throw new Error('Raw event storage record mixes multiple word/date keys');
+    }
+    const existing = await target.getRawEventsByDate(
+      sample.userId,
+      sample.wordId,
+      sample.localDate
+    );
+    const existingKeys = new Set(existing.map(rawEventKey));
+    const missing = item.value.filter((event) => !existingKeys.has(rawEventKey(event)));
+    if (missing.length > 0) await target.saveRawEvents(missing);
+    const saved = await target.getRawEventsByDate(
+      sample.userId,
+      sample.wordId,
+      sample.localDate
+    );
+    const savedKeys = new Set(saved.map(rawEventKey));
+    if (!item.value.every((event) => savedKeys.has(rawEventKey(event)))) {
+      throw new Error('Raw event verification failed');
+    }
+    return;
   }
 
-  const already = await target.getMeta<boolean>(MIGRATION_META_KEY);
-  if (already) return { migrated: false, importedKeys: 0 };
+  if (item.kind === 'article') {
+    await target.saveArticleEvidence(item.value);
+    const saved = await target.getArticleEvidence(
+      item.value.userId,
+      item.value.wordId,
+      item.value.articleId,
+      item.value.localDate
+    );
+    if (!sameJson(saved, item.value)) throw new Error('Article evidence verification failed');
+    return;
+  }
 
-  let importedKeys = 0;
+  if (item.kind === 'daily') {
+    await target.saveDailyEvidence(item.value);
+    const saved = await target.getDailyEvidence(
+      item.value.userId,
+      item.value.wordId,
+      item.value.localDate
+    );
+    if (!sameJson(saved, item.value)) throw new Error('Daily evidence verification failed');
+    return;
+  }
+
+  if (item.kind === 'state') {
+    await target.saveMemoryState(item.value);
+    const saved = await target.getMemoryState(item.value.userId, item.value.wordId);
+    if (!sameJson(saved, item.value)) throw new Error('Memory state verification failed');
+    return;
+  }
+
+  await target.createFinalizationTask(item.value);
+  const tasks = await target.getPendingFinalizationTasks(item.value.userId);
+  const saved = tasks.find((task) => task.localDate === item.value.localDate);
+  if (!sameJson(saved, item.value)) throw new Error('Finalization task verification failed');
+}
+
+function migrationState(
+  status: LocalStorageMigrationStatus,
+  counts: Pick<
+    LocalStorageMigrationState,
+    'scannedKeys' | 'importedKeys' | 'verifiedKeys' | 'failedKeys'
+  >,
+  legacyProficiency: LocalStorageMigrationState['legacyProficiency']
+): LocalStorageMigrationState {
+  return {
+    version: 1,
+    scope: 'memory-v2-local-storage',
+    status,
+    ...counts,
+    legacyProficiency,
+  };
+}
+
+/**
+ * Import legacy Memory V2 localStorage records into IndexedDB. A structured
+ * checkpoint is written before work starts and completion is recorded only
+ * after every recognized source record has been read back successfully.
+ * Source keys remain intact so a failed run can safely fall back and retry.
+ */
+export async function migrateLocalStorageToIndexedDb(
+  target: LocalStorageMigrationTarget
+): Promise<LocalStorageMigrationResult> {
+  if (typeof localStorage === 'undefined') {
+    return {
+      migrated: false,
+      importedKeys: 0,
+      verifiedKeys: 0,
+      failedKeys: 0,
+      completed: false,
+      usable: false,
+    };
+  }
+
+  const legacyProficiency = localStorage.getItem(LEGACY_PROFICIENCY_KEY) === null
+    ? 'not-found'
+    : 'pending-explicit-migration';
+  const previous = await target.getMeta<unknown>(MIGRATION_META_KEY);
+
+  if (isCompletedMigrationState(previous)) {
+    return {
+      migrated: false,
+      importedKeys: 0,
+      verifiedKeys: previous.verifiedKeys,
+      failedKeys: 0,
+      completed: true,
+      usable: true,
+    };
+  }
+
+  if (isLegacyUnverifiedMigrationState(previous)) {
+    return {
+      migrated: false,
+      importedKeys: 0,
+      verifiedKeys: 0,
+      failedKeys: 0,
+      completed: false,
+      usable: true,
+    };
+  }
+
+  // Old releases wrote only `true`, even after partial failures. Re-importing
+  // stale raw events/tasks can resurrect already-finalized data, so preserve
+  // IndexedDB as active but explicitly record that the legacy run is unverified.
+  if (previous === true) {
+    const state = migrationState(
+      'legacy-unverified',
+      { scannedKeys: 0, importedKeys: 0, verifiedKeys: 0, failedKeys: 0 },
+      legacyProficiency
+    );
+    await target.setMeta(MIGRATION_META_KEY, state);
+    return {
+      migrated: false,
+      importedKeys: 0,
+      verifiedKeys: 0,
+      failedKeys: 0,
+      completed: false,
+      usable: true,
+    };
+  }
+
+  const sourceKeys: string[] = [];
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
     if (!key || !key.startsWith(LS_PREFIX)) continue;
-
-    let value: unknown;
-    try {
-      value = JSON.parse(localStorage.getItem(key) ?? 'null');
-    } catch {
+    if (
+      key.includes(':raw-index:') ||
+      key.includes(':article-index:') ||
+      key.includes(':daily-index:') ||
+      key.includes(':state-index:') ||
+      key.includes(':task-index:')
+    ) {
       continue;
     }
-    if (value == null) continue;
+    sourceKeys.push(key);
+  }
 
+  await target.setMeta(
+    MIGRATION_META_KEY,
+    migrationState(
+      'in-progress',
+      {
+        scannedKeys: sourceKeys.length,
+        importedKeys: 0,
+        verifiedKeys: 0,
+        failedKeys: 0,
+      },
+      legacyProficiency
+    )
+  );
+
+  let importedKeys = 0;
+  let verifiedKeys = 0;
+  let failedKeys = 0;
+
+  for (const key of sourceKeys) {
     try {
-      if (key.includes(':raw:') && !key.includes(':raw-index:')) {
-        // english-ai:v2:memory:raw:user:word:date
-        const parts = key.split(':');
-        // [english-ai, v2, memory, raw, userId, wordId, localDate...]
-        const userId = parts[4];
-        const wordId = parts[5];
-        const localDate = parts.slice(6).join(':');
-        const events = value as RawWordEvent[];
-        if (Array.isArray(events) && userId && wordId && localDate) {
-          await target.saveRawEvents(events);
-          importedKeys += 1;
-        }
-      } else if (key.includes(':article:') && !key.includes(':article-index:')) {
-        await target.saveArticleEvidence(value as ArticleWordEvidence);
-        importedKeys += 1;
-      } else if (key.includes(':daily:') && !key.includes(':daily-index:')) {
-        await target.saveDailyEvidence(value as DailyWordEvidence);
-        importedKeys += 1;
-      } else if (key.includes(':state:') && !key.includes(':state-index:')) {
-        await target.saveMemoryState(value as WordMemoryState);
-        importedKeys += 1;
-      } else if (key.includes(':task:') && !key.includes(':task-index:')) {
-        await target.createFinalizationTask(value as FinalizationTask);
-        importedKeys += 1;
-      }
+      const raw = localStorage.getItem(key);
+      if (raw === null) throw new Error('Source record disappeared during migration');
+      const item = parseMigrationItem(key, JSON.parse(raw));
+      if (!item) throw new Error('Unsupported Memory V2 storage record');
+      await importAndVerifyItem(target, item);
+      importedKeys += 1;
+      verifiedKeys += 1;
     } catch (error) {
-      console.error('Memory localStorage → IndexedDB migration item failed:', key, error);
+      failedKeys += 1;
+      console.error('Memory localStorage to IndexedDB migration item failed:', key, error);
     }
   }
 
-  await target.setMeta(MIGRATION_META_KEY, true);
-  return { migrated: true, importedKeys };
+  const completed = failedKeys === 0 && verifiedKeys === sourceKeys.length;
+  await target.setMeta(
+    MIGRATION_META_KEY,
+    migrationState(
+      completed ? 'completed' : 'in-progress',
+      { scannedKeys: sourceKeys.length, importedKeys, verifiedKeys, failedKeys },
+      legacyProficiency
+    )
+  );
+
+  return {
+    migrated: importedKeys > 0,
+    importedKeys,
+    verifiedKeys,
+    failedKeys,
+    completed,
+    usable: completed,
+  };
 }
 
-/** Prefer IndexedDB; fall back to localStorage when unavailable. */
+/** Prefer IndexedDB; fall back to localStorage when unavailable or migration is incomplete. */
 export async function createPreferredMemoryStorage(): Promise<MemoryStorage> {
   if (typeof indexedDB === 'undefined') {
     return new LocalStorageMemoryStorage();
@@ -499,7 +843,11 @@ export async function createPreferredMemoryStorage(): Promise<MemoryStorage> {
     const idb = new IndexedDbMemoryStorage();
     // Force open + migrate before first real write.
     await idb.getMeta('warmup');
-    await migrateLocalStorageToIndexedDb(idb);
+    const migration = await migrateLocalStorageToIndexedDb(idb);
+    if (!migration.usable) {
+      console.warn('Memory migration is incomplete; retrying from localStorage next start.');
+      return new LocalStorageMemoryStorage();
+    }
     return idb;
   } catch (error) {
     console.warn('IndexedDB Memory storage unavailable; using localStorage.', error);

@@ -1,12 +1,62 @@
 import { Router } from 'express';
-import { MAGAZINE_SOURCES } from './config';
+import { getSourceById, MAGAZINE_SOURCES } from './config';
 import {
   loadArticle,
   loadIndex,
   loadIssueById,
   loadRecommendationCandidates,
 } from './store';
-import { getSyncStatus, runMagazineSync } from './sync';
+import { loadMagazineLemmaIndex } from './lemmaIndex';
+import { getSyncStatus, runMagazineSync, type SyncOptions } from './sync';
+
+
+interface SyncRequestError extends Error {
+  code: 'INVALID_SYNC_REQUEST';
+}
+
+function invalidSyncRequest(message: string): SyncRequestError {
+  const error = new Error(`Invalid sync request: ${message}`) as SyncRequestError;
+  error.code = 'INVALID_SYNC_REQUEST';
+  return error;
+}
+
+export function parseSyncRequest(body: unknown): SyncOptions {
+  if (body === undefined || body === null) return {};
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    throw invalidSyncRequest('body must be a JSON object');
+  }
+
+  const value = body as Record<string, unknown>;
+  let sources: string[] | undefined;
+  if (Object.prototype.hasOwnProperty.call(value, 'sources')) {
+    if (!Array.isArray(value.sources) || value.sources.length === 0) {
+      throw invalidSyncRequest('sources must be a non-empty array');
+    }
+    if (value.sources.length > MAGAZINE_SOURCES.length) {
+      throw invalidSyncRequest(`sources may contain at most ${MAGAZINE_SOURCES.length} items`);
+    }
+
+    const deduplicated = new Set<string>();
+    for (const source of value.sources) {
+      if (typeof source !== 'string' || !getSourceById(source)) {
+        throw invalidSyncRequest(`unknown source: ${String(source)}`);
+      }
+      deduplicated.add(source);
+    }
+    sources = [...deduplicated];
+  }
+
+  let maxIssuesPerSource: number | undefined;
+  if (Object.prototype.hasOwnProperty.call(value, 'maxIssuesPerSource')) {
+    const requested = value.maxIssuesPerSource;
+    if (!Number.isSafeInteger(requested) || (requested as number) < 1 || (requested as number) > 30) {
+      throw invalidSyncRequest('maxIssuesPerSource must be an integer from 1 to 30');
+    }
+    maxIssuesPerSource = requested as number;
+  }
+
+  return { sources, maxIssuesPerSource };
+}
 
 export function createMagazineRouter(): Router {
   const router = Router();
@@ -46,7 +96,8 @@ export function createMagazineRouter(): Router {
 
   router.get('/issues/:issueId', async (req, res) => {
     try {
-      const issueId = decodeURIComponent(req.params.issueId);
+      // Express already decodes route parameters once. Do not decode attacker-controlled IDs again.
+      const issueId = req.params.issueId;
       const payload = await loadIssueById(issueId);
       if (!payload) {
         return res.status(404).json({
@@ -81,16 +132,20 @@ export function createMagazineRouter(): Router {
   /**
    * Full articles for the interactive recommendation feed (Memory V2 ranking pool).
    * Query: ?limit=48 (1–120)
+   * Pool members rotate once per local calendar day (stable within the day).
    */
   router.get('/recommendation-candidates', async (req, res) => {
     try {
       const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 48;
       const limit = Number.isFinite(rawLimit) ? rawLimit : 48;
-      const articles = await loadRecommendationCandidates(limit);
+      const result = await loadRecommendationCandidates(limit);
       res.json({
         ok: true,
-        count: articles.length,
-        articles,
+        count: result.articles.length,
+        rotationDate: result.rotationDate,
+        universeSize: result.universeSize,
+        limit: result.limit,
+        articles: result.articles,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -101,19 +156,39 @@ export function createMagazineRouter(): Router {
     }
   });
 
+  /**
+   * Compact full-catalog lemma index for client-side Memory V2 ranking.
+   * Built once per catalog fingerprint (~2s cold), then served from disk/memory.
+   * Query: ?rebuild=1 to force rebuild.
+   */
+  router.get('/lemma-index', async (req, res) => {
+    try {
+      const forceRebuild =
+        req.query.rebuild === '1'
+        || req.query.rebuild === 'true';
+      const started = Date.now();
+      const index = await loadMagazineLemmaIndex({ forceRebuild });
+      res.json({
+        ok: true,
+        loadMs: Date.now() - started,
+        index,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({
+        ok: false,
+        error: { code: 'LEMMA_INDEX_FAILED', message },
+      });
+    }
+  });
+
   router.get('/sync/status', (_req, res) => {
     res.json({ ok: true, ...getSyncStatus() });
   });
 
   router.post('/sync', async (req, res) => {
     try {
-      const sources = Array.isArray(req.body?.sources)
-        ? req.body.sources.filter((s: unknown) => typeof s === 'string')
-        : undefined;
-      const maxIssuesPerSource =
-        typeof req.body?.maxIssuesPerSource === 'number'
-          ? req.body.maxIssuesPerSource
-          : undefined;
+      const { sources, maxIssuesPerSource } = parseSyncRequest(req.body);
 
       // Run async so client can poll status; also return result when short
       const status = getSyncStatus();
@@ -142,7 +217,7 @@ export function createMagazineRouter(): Router {
     } catch (err) {
       const e = err as Error & { code?: string };
       const code = e.code || 'SYNC_FAILED';
-      const statusCode = code === 'SYNC_IN_PROGRESS' ? 409 : 500;
+      const statusCode = code === 'SYNC_IN_PROGRESS' ? 409 : code === 'INVALID_SYNC_REQUEST' ? 400 : 500;
       res.status(statusCode).json({
         ok: false,
         error: { code, message: e.message || 'Sync failed' },

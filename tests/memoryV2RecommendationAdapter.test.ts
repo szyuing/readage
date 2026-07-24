@@ -11,13 +11,17 @@ import { memoryV2 } from '../src/lib/memoryV2/hooks';
 const originalGetSystem = memoryV2.getSystem;
 const originalGetUserId = memoryV2.getUserId;
 
-function article(id: string, word: string): Article {
+function article(
+  id: string,
+  word: string,
+  status: Article['status'] = 'In Progress'
+): Article {
   return {
     id,
     title: `${word} article`,
     description: `An article about ${word}`,
     date: '2026-07-24',
-    status: 'Completed',
+    status,
     content: [word],
     level: 'B1',
   };
@@ -121,5 +125,86 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
 
     assert.equal(recommendations[0]?.articleId, 'other-article');
     assert.deepEqual(requestedLimits, [1]);
+  });
+
+  it('prefers higher unique review-word coverage even when general score favors another article', async () => {
+    installMemorySystemStub({
+      dueWords: [],
+      allProficiency: [
+        proficiency('alpha'),
+        proficiency('beta'),
+        proficiency('gamma'),
+      ],
+    });
+
+    // Many learning-zone fillers boost the generic engine score for one-hit articles.
+    const oneHitBloated: Article = {
+      ...article('one-hit', 'alpha'),
+      content: [
+        'alpha learning1 learning2 learning3 learning4 learning5 learning6 learning7 learning8',
+      ],
+      status: 'In Progress',
+    };
+    const threeHitLean: Article = {
+      ...article('three-hit', 'alpha'),
+      content: ['alpha beta gamma'],
+      status: 'In Progress',
+    };
+
+    const recommendations = await createMemoryV2Adapter({
+      strategy: 'review-first',
+    }).recommendForReview([oneHitBloated, threeHitLean], ['alpha', 'beta', 'gamma'], 2);
+
+    assert.equal(recommendations[0]?.articleId, 'three-hit');
+    assert.ok(
+      (recommendations[0]?.dueWordsCount ?? 0) >= 3
+      || (recommendations[0]?.reason ?? '').includes('3')
+    );
+  });
+
+  it('never returns a Completed article even if it is the only review-word hit', async () => {
+    installMemorySystemStub({
+      dueWords: [],
+      allProficiency: [proficiency('target')],
+    });
+
+    const selected = await memoryV2RecommendationProvider(
+      {
+        topic: '',
+        reviewWords: ['target'],
+        excludeArticleIds: [],
+      },
+      [
+        article('done-target', 'target', 'Completed'),
+        {
+          ...article('fresh-other', 'other'),
+          content: ['other filler words for length'],
+        },
+      ]
+    );
+
+    // Completed hit must be skipped; fall through may pick nothing or non-completed.
+    assert.notEqual(selected?.id, 'done-target');
+  });
+
+  it('never returns an article listed in excludeArticleIds', async () => {
+    installMemorySystemStub({
+      dueWords: [],
+      allProficiency: [proficiency('target'), proficiency('other')],
+    });
+
+    const selected = await memoryV2RecommendationProvider(
+      {
+        topic: '',
+        reviewWords: ['target'],
+        excludeArticleIds: ['best-hit'],
+      },
+      [
+        { ...article('best-hit', 'target'), status: 'In Progress' },
+        { ...article('second-hit', 'target'), status: 'In Progress', content: ['target and more'] },
+      ]
+    );
+
+    assert.equal(selected?.id, 'second-hit');
   });
 });

@@ -39,7 +39,7 @@ export interface EnrichResult {
 
 /** Limits sized for ~10,000-word (万字) active-reading imports. */
 export const IMPORT_LIMITS = {
-  /** Hard ceiling on paragraph units after split (≈ 10k words / ~30 wpp). */
+  /** Maximum paragraph units accepted by one translate_article request. */
   MAX_PARAGRAPHS: 400,
   /** Must stay ≤ tutorValidation `message` limit. */
   MAX_CHARS_PER_PARAGRAPH: 6_000,
@@ -125,7 +125,7 @@ export function splitArticleParagraphs(text: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean);
   if (byDouble.length > 1) {
-    return expandAndCapParagraphs(byDouble);
+    return expandParagraphs(byDouble);
   }
 
   const bySingle = normalized
@@ -133,10 +133,10 @@ export function splitArticleParagraphs(text: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean);
   if (bySingle.length > 1) {
-    return expandAndCapParagraphs(bySingle);
+    return expandParagraphs(bySingle);
   }
 
-  return expandAndCapParagraphs([normalized]);
+  return expandParagraphs([normalized]);
 }
 
 /**
@@ -185,7 +185,7 @@ export function splitOversizedParagraph(
   return chunks.length ? chunks : [trimmed.slice(0, maxChars)];
 }
 
-function expandAndCapParagraphs(paragraphs: string[]): string[] {
+function expandParagraphs(paragraphs: string[]): string[] {
   return paragraphs.flatMap((paragraph) => splitOversizedParagraph(paragraph));
 }
 
@@ -303,10 +303,12 @@ async function translateParagraphsConcurrent(
 
   const reasonLabel =
     reason === 'oversized'
-      ? '超长文章'
-      : reason === 'full_failed'
-        ? '全文翻译失败'
-        : '强制分段';
+      ? '\u8d85\u957f\u6587\u7ae0'
+      : reason === 'too_many_paragraphs'
+        ? '\u6bb5\u843d\u8d85\u8fc7\u5355\u6b21\u5168\u6587\u7ffb\u8bd1\u4e0a\u9650'
+        : reason === 'full_failed'
+          ? '\u5168\u6587\u7ffb\u8bd1\u5931\u8d25'
+          : '\u5f3a\u5236\u5206\u6bb5';
 
   onProgress?.({
     phase: 'translating',

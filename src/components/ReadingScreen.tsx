@@ -628,6 +628,26 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     }
   };
 
+  /** Look up a related word from the dictionary panel (word-family chips). */
+  const handleExplainWord = async (word: string) => {
+    setIsExplaining(true);
+    setGrammarResult(null);
+    onGrammarQuery?.(word);
+    try {
+      const response = await postTutor<GrammarExplanation>({
+        intent: 'explain',
+        articleId: article.id,
+        selectedText: word,
+        contextSentence: '',
+      });
+      setGrammarResult(response.result);
+    } catch {
+      setGrammarResult(null);
+    } finally {
+      setIsExplaining(false);
+    }
+  };
+
   const handleTranslate = async () => {
     if (!selectedText) return;
     clearSelectionPopover();
@@ -1202,7 +1222,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     <h3 className="font-serif text-3xl font-bold text-[#2A2621]">
                       {grammarResult.wordOrPhrase}
                     </h3>
-                    <div className="flex items-center gap-2 mt-1.5">
+                    <div className="flex items-center flex-wrap gap-2 mt-1.5">
                       {grammarResult.phonetic && (
                         <span className="text-xs font-mono text-[#78716C] bg-[#EFECE3] px-2 py-0.5 rounded border border-[#E0DBCF]">
                           {grammarResult.phonetic}
@@ -1211,6 +1231,24 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                       <span className="px-2.5 py-0.5 bg-[#FDF2EE] text-[#C35E37] border border-[#FADCD1] rounded-md text-xs font-medium">
                         {grammarResult.type}
                       </span>
+                      {grammarResult.cefrLevel && (
+                        <span className="px-2 py-0.5 bg-[#EEF4FF] text-[#1D4ED8] border border-[#BFDBFE] rounded-md text-xs font-semibold">
+                          {grammarResult.cefrLevel}
+                        </span>
+                      )}
+                      {grammarResult.tags?.map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-2 py-0.5 bg-[#F3F0EA] text-[#6B6355] border border-[#E0DACE] rounded-md text-[11px] font-medium"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {grammarResult.source === 'dictionary' && (
+                        <span className="px-2 py-0.5 bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] rounded-md text-[11px] font-medium">
+                          本地词典
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button
@@ -1237,9 +1275,27 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     English definition
                   </span>
                   <div className="p-3 bg-[#F5F2EA] rounded-xl border border-[#E7E1D4] space-y-1.5">
-                    <p className="text-sm text-[#2E2A25] font-medium leading-relaxed">
-                      {grammarResult.definition}
-                    </p>
+                    {grammarResult.senses?.length ? (
+                      <ol className="space-y-2">
+                        {grammarResult.senses.map((sense, idx) => (
+                          <li key={idx} className="text-sm leading-relaxed">
+                            <span className="font-semibold text-[#7A7166] mr-1.5">
+                              {idx + 1}.{sense.partOfSpeech ? ` ${sense.partOfSpeech}` : ''}
+                            </span>
+                            <span className="text-[#2E2A25] font-medium">{sense.definition}</span>
+                            {sense.definitionZh && (
+                              <span className="block text-xs text-[#065F46] mt-0.5">
+                                {sense.definitionZh}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="text-sm text-[#2E2A25] font-medium leading-relaxed">
+                        {grammarResult.definition}
+                      </p>
+                    )}
                     {grammarResult.definitionChinese && (
                       <p className="text-xs text-[#065F46] font-medium bg-[#ECFDF5] px-2 py-1 rounded border border-[#A7F3D0]">
                         {'释义汉译：'}
@@ -1275,6 +1331,62 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                         >
                           &quot;{ex}&quot;
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {grammarResult.exchanges && grammarResult.exchanges.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
+                      词形变化
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {grammarResult.exchanges.map((exchange, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-1 bg-white border border-[#E5DFD1] rounded-lg text-xs text-[#4A443B]"
+                        >
+                          <span className="text-[#9C9388]">{exchange.label}</span> {exchange.value}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {grammarResult.collocations && grammarResult.collocations.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
+                      常见搭配
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {grammarResult.collocations.map((collocation, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-1 bg-[#FDF6EC] border border-[#F3E3C3] rounded-lg text-xs text-[#7C4A03]"
+                        >
+                          {collocation.en}
+                          {collocation.zh ? ` ${collocation.zh}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {grammarResult.relatedWords && grammarResult.relatedWords.length > 0 && (
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
+                      同族词
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {grammarResult.relatedWords.map((related) => (
+                        <button
+                          key={related}
+                          onClick={() => handleExplainWord(related)}
+                          className="px-2 py-1 bg-[#EEF2FF] hover:bg-[#E0E7FF] border border-[#C7D2FE] rounded-lg text-xs text-[#3730A3] transition-colors"
+                        >
+                          {related}
+                        </button>
                       ))}
                     </div>
                   </div>

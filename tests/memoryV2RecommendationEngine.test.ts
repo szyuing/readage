@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import type { WordProficiencyView } from '../src/lib/memoryV2/memorySystem';
 import {
   RecommendationEngine,
+  countUniqueReviewHits,
+  rankCandidatesByReviewHits,
+  scheduleReviewArticles,
   type ArticleCandidate,
 } from '../src/lib/memoryV2/recommendation';
 
@@ -173,5 +176,61 @@ describe('RecommendationEngine cold-start filtering', () => {
     assert.equal(ranked[0]?.articleId, 'topic-and-level');
     assert.ok(ranked[0]!.score > ranked[1]!.score);
     assert.match(ranked[0]!.reason, /冷启动|匹配/);
+  });
+});
+
+describe('review hit-rate ranking', () => {
+  it('counts unique target hits, not repeated lemma occurrences', () => {
+    const lemmas = ['target', 'target', 'target', 'other'];
+    assert.equal(countUniqueReviewHits(lemmas, new Set(['target', 'miss'])), 1);
+    assert.equal(countUniqueReviewHits(lemmas, ['target', 'other']), 2);
+  });
+
+  it('prefers articles that cover more distinct review words over longer single-word spam', () => {
+    const dueWords = [
+      proficiency('alpha', 1, '2020-01-01T00:00:00.000Z'),
+      proficiency('beta', 1, '2020-01-01T00:00:00.000Z'),
+      proficiency('gamma', 1, '2020-01-01T00:00:00.000Z'),
+    ];
+    // Old bug: counting lemma occurrences favored "alpha" repeated many times.
+    const spamOneWord = candidate('spam-one', [
+      'alpha', 'alpha', 'alpha', 'alpha', 'alpha', 'alpha',
+    ]);
+    const highCoverage = candidate('high-coverage', ['alpha', 'beta', 'gamma', 'filler']);
+
+    const ranked = scheduleReviewArticles(dueWords, [spamOneWord, highCoverage], 3);
+    assert.equal(ranked[0]?.article.id, 'high-coverage');
+    assert.equal(ranked[1]?.article.id, 'spam-one');
+  });
+
+  it('ranks by unique review hits first, then secondary engine score', () => {
+    const targets = ['due-a', 'due-b', 'due-c'];
+    const lowHitsHighSecondary = candidate('low-hits', ['due-a', 'x', 'y', 'z']);
+    const highHits = candidate('high-hits', ['due-a', 'due-b', 'due-c', 'w']);
+
+    const ranked = rankCandidatesByReviewHits(
+      [lowHitsHighSecondary, highHits],
+      targets,
+      new Map([
+        ['low-hits', 999],
+        ['high-hits', 1],
+      ])
+    );
+
+    assert.deepEqual(
+      ranked.map((item) => item.article.id),
+      ['high-hits', 'low-hits']
+    );
+  });
+
+  it('drops articles with zero review-word hits', () => {
+    const ranked = rankCandidatesByReviewHits(
+      [candidate('miss', ['unrelated']), candidate('hit', ['due-a'])],
+      ['due-a']
+    );
+    assert.deepEqual(
+      ranked.map((item) => item.article.id),
+      ['hit']
+    );
   });
 });

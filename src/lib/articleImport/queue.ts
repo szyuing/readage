@@ -38,6 +38,8 @@ export const ARTICLE_IMPORT_CONCURRENCY = 2;
  */
 export const ARTICLE_IMPORT_JOB_TIMEOUT_MS = 6 * 60_000;
 
+const TERMINAL_JOB_HISTORY_LIMIT = 80;
+
 export interface ImportJob {
   id: string;
   articleId: string;
@@ -104,6 +106,10 @@ function cloneJobs(jobs: ImportJob[]): ImportJob[] {
   }));
 }
 
+function isTerminalStatus(status: ImportJobStatus): boolean {
+  return status === 'done' || status === 'failed' || status === 'cancelled';
+}
+
 export class ArticleImportQueue {
   private jobs: ImportJob[] = [];
   /** Number of runJob promises currently in flight. */
@@ -112,8 +118,8 @@ export class ArticleImportQueue {
   private options: ArticleImportQueueOptions = {};
   /** Prevent double-enqueue of the same article while active/queued. */
   private activeIds = new Set<string>();
-  /** Soft-cancel set so in-flight jobs can exit without TS status narrowing issues. */
-  private cancelledIds = new Set<string>();
+  /** Soft-cancel set so in-flight jobs can exit without clobbering a later retry. */
+  private cancelledJobs = new Set<ImportJob>();
 
   configure(options: ArticleImportQueueOptions): void {
     this.options = { ...this.options, ...options };
@@ -225,7 +231,8 @@ export class ArticleImportQueue {
       lockedLevelRating,
     };
 
-    this.jobs = [job, ...this.jobs].slice(0, 80);
+    this.jobs = [job, ...this.jobs];
+    this.trimTerminalHistory();
     this.activeIds.add(article.id);
     this.emit();
     this.pump();
@@ -258,10 +265,11 @@ export class ArticleImportQueue {
       (j) => j.articleId === articleId && (j.status === 'queued' || j.status === 'processing')
     );
     if (!job) return false;
-    this.cancelledIds.add(articleId);
+    if (job.status === 'processing') this.cancelledJobs.add(job);
     job.status = 'cancelled';
     job.finishedAt = new Date().toISOString();
     this.activeIds.delete(articleId);
+    this.trimTerminalHistory();
     this.emit();
     this.pump();
     return true;
@@ -277,6 +285,15 @@ export class ArticleImportQueue {
       this.activeIds.delete(article.id);
     }
     return this.enqueue(article, 'retry');
+  }
+
+  private trimTerminalHistory(): void {
+    let terminalCount = 0;
+    this.jobs = this.jobs.filter((job) => {
+      if (!isTerminalStatus(job.status)) return true;
+      terminalCount += 1;
+      return terminalCount <= TERMINAL_JOB_HISTORY_LIMIT;
+    });
   }
 
   private emit(): void {
@@ -348,7 +365,7 @@ export class ArticleImportQueue {
             // One article → one rating: skip AI re-grade when already locked.
             skipRating: Boolean(job.lockedLevelRating),
             onProgress: (progress) => {
-              if (this.cancelledIds.has(job.articleId)) return;
+              if (this.cancelledJobs.has(job)) return;
               // Ignore late progress after this job already left processing.
               if (job.status !== 'processing') return;
               const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
@@ -372,12 +389,12 @@ export class ArticleImportQueue {
       ]);
       if (jobTimeoutId) clearTimeout(jobTimeoutId);
 
-      if (this.cancelledIds.has(job.articleId)) {
-        this.cancelledIds.delete(job.articleId);
-        this.activeIds.delete(job.articleId);
-        this.emit();
+      if (this.cancelledJobs.has(job)) {
+        this.cancelledJobs.delete(job);
         return;
       }
+      // A stale-job watchdog may have finalized this job while its request was still running.
+      if (job.status !== 'processing') return;
 
       const base: Article = {
         id: job.articleId,
@@ -406,6 +423,7 @@ export class ArticleImportQueue {
         charCount: enrichment.charCount,
       };
       this.activeIds.delete(job.articleId);
+      this.trimTerminalHistory();
       this.emit();
       this.options.onComplete?.({
         articleId: job.articleId,
@@ -417,10 +435,8 @@ export class ArticleImportQueue {
       });
     } catch (error) {
       if (jobTimeoutId) clearTimeout(jobTimeoutId);
-      if (this.cancelledIds.has(job.articleId)) {
-        this.cancelledIds.delete(job.articleId);
-        this.activeIds.delete(job.articleId);
-        this.emit();
+      if (this.cancelledJobs.has(job)) {
+        this.cancelledJobs.delete(job);
         return;
       }
       // Already finished by another path (e.g. cancelAll) — do not clobber.
@@ -436,6 +452,7 @@ export class ArticleImportQueue {
         message: `失败：${message}`,
       };
       this.activeIds.delete(job.articleId);
+      this.trimTerminalHistory();
       this.emit();
       this.options.onFailed?.(job.articleId, message);
     } finally {
@@ -466,9 +483,9 @@ export class ArticleImportQueue {
       n += 1;
     }
     if (n > 0) {
-      this.inFlight = Math.max(0, this.inFlight - n);
+      // The original runJob Promise still owns its slot and releases it in pump().finally().
+      this.trimTerminalHistory();
       this.emit();
-      this.pump();
     }
     return n;
   }
@@ -478,7 +495,7 @@ export class ArticleImportQueue {
     let n = 0;
     for (const job of this.jobs) {
       if (job.status !== 'queued' && job.status !== 'processing') continue;
-      this.cancelledIds.add(job.articleId);
+      if (job.status === 'processing') this.cancelledJobs.add(job);
       job.status = 'cancelled';
       job.finishedAt = new Date().toISOString();
       job.progress = {
@@ -490,7 +507,7 @@ export class ArticleImportQueue {
       this.activeIds.delete(job.articleId);
       n += 1;
     }
-    this.inFlight = 0;
+    this.trimTerminalHistory();
     this.emit();
     return n;
   }

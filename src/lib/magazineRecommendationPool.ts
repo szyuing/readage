@@ -1,48 +1,68 @@
 /**
  * Client loader for the magazine-backed recommendation candidate pool.
  * Prefer real外刊 content over the five demo LIBRARY_ARTICLES stubs.
+ * Pool members rotate once per local calendar day (server-seeded).
  */
 
 import type { Article } from '../types';
+import { getRecommendationPoolRotationDate } from './recommendationPoolRotation';
 
 const DEFAULT_POOL_LIMIT = 48;
-const CACHE_TTL_MS = 5 * 60_000;
+/** Soft TTL within the same rotation day (ms). Day change always invalidates. */
+const CACHE_TTL_MS = 30 * 60_000;
 
 export interface MagazineRecommendationPoolResult {
   articles: Article[];
   source: 'magazine' | 'empty' | 'error';
   errorMessage?: string;
+  /** Local calendar day this pool was built for (YYYY-MM-DD). */
+  rotationDate?: string;
+  universeSize?: number;
 }
 
 let cachedPool: Article[] | null = null;
+let cachedRotationDate: string | null = null;
 let cachedAt = 0;
 let inflight: Promise<MagazineRecommendationPoolResult> | null = null;
 
 export function clearMagazineRecommendationPoolCache(): void {
   cachedPool = null;
+  cachedRotationDate = null;
   cachedAt = 0;
   inflight = null;
 }
 
+function isCacheValidForToday(now: Date = new Date()): boolean {
+  if (!cachedPool || !cachedRotationDate) return false;
+  const today = getRecommendationPoolRotationDate(now);
+  if (cachedRotationDate !== today) return false;
+  if (Date.now() - cachedAt > CACHE_TTL_MS) return false;
+  return true;
+}
+
 export function getCachedMagazineRecommendationPool(): Article[] {
-  if (!cachedPool) return [];
-  if (Date.now() - cachedAt > CACHE_TTL_MS) return cachedPool;
-  return cachedPool;
+  if (!isCacheValidForToday()) return [];
+  return cachedPool ?? [];
 }
 
 /**
  * Fetch (or reuse) a capped set of full magazine articles for ranking.
+ * Cache is keyed by rotation day so the pool refreshes after midnight.
  */
 export async function fetchMagazineRecommendationPool(
   limit = DEFAULT_POOL_LIMIT,
-  options?: { force?: boolean; fetchImpl?: typeof fetch; signal?: AbortSignal }
+  options?: { force?: boolean; fetchImpl?: typeof fetch; signal?: AbortSignal; now?: Date }
 ): Promise<MagazineRecommendationPoolResult> {
   const force = options?.force === true;
   const fetchImpl = options?.fetchImpl ?? fetch;
-  const now = Date.now();
+  const now = options?.now ?? new Date();
 
-  if (!force && cachedPool && now - cachedAt <= CACHE_TTL_MS) {
-    return { articles: cachedPool, source: cachedPool.length ? 'magazine' : 'empty' };
+  if (!force && isCacheValidForToday(now) && cachedPool) {
+    return {
+      articles: cachedPool,
+      source: cachedPool.length ? 'magazine' : 'empty',
+      rotationDate: cachedRotationDate ?? undefined,
+    };
   }
 
   if (!force && inflight) {
@@ -59,21 +79,25 @@ export async function fetchMagazineRecommendationPool(
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         return {
-          articles: cachedPool ?? [],
+          articles: isCacheValidForToday(now) ? (cachedPool ?? []) : [],
           source: 'error',
           errorMessage: text || `HTTP ${res.status}`,
+          rotationDate: cachedRotationDate ?? undefined,
         };
       }
       const data = (await res.json()) as {
         ok?: boolean;
         articles?: Article[];
+        rotationDate?: string;
+        universeSize?: number;
         error?: { message?: string };
       };
       if (!data.ok || !Array.isArray(data.articles)) {
         return {
-          articles: cachedPool ?? [],
+          articles: isCacheValidForToday(now) ? (cachedPool ?? []) : [],
           source: 'error',
           errorMessage: data.error?.message || 'Invalid recommendation pool response',
+          rotationDate: cachedRotationDate ?? undefined,
         };
       }
       const articles = data.articles.filter(
@@ -83,20 +107,29 @@ export async function fetchMagazineRecommendationPool(
           && Array.isArray(article.content)
           && article.content.length > 0
       );
+      const rotationDate =
+        typeof data.rotationDate === 'string' && data.rotationDate
+          ? data.rotationDate
+          : getRecommendationPoolRotationDate(now);
+
       cachedPool = articles;
+      cachedRotationDate = rotationDate;
       cachedAt = Date.now();
       return {
         articles,
         source: articles.length ? 'magazine' : 'empty',
+        rotationDate,
+        universeSize: data.universeSize,
       };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw error;
       }
       return {
-        articles: cachedPool ?? [],
+        articles: isCacheValidForToday(now) ? (cachedPool ?? []) : [],
         source: 'error',
         errorMessage: error instanceof Error ? error.message : String(error),
+        rotationDate: cachedRotationDate ?? undefined,
       };
     } finally {
       inflight = null;

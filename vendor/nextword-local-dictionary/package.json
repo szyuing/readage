@@ -1,0 +1,35 @@
+{
+  "name": "nextword-local-dictionary",
+  "version": "1.0.0",
+  "description": "Portable offline ECDICT lookup package extracted from NextWord",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE-ECDICT",
+    "THIRD_PARTY_NOTICES.md",
+    "DATA_MANIFEST.json",
+    "data/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:data": "node scripts/build-all.mjs",
+    "build:pack": "node scripts/build-pack.mjs",
+    "build:manifest": "node scripts/build-manifest.mjs",
+    "extract-batches": "node scripts/extract-batches.mjs",
+    "merge-definitions": "node scripts/merge-definitions.mjs"
+  },
+  "keywords": ["dictionary", "ecdict", "offline", "english", "chinese"],
+  "license": "UNLICENSED"
+}

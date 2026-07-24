@@ -38,19 +38,29 @@ Grading (per day, once to FSRS):
 ## 4. Recommendation chain
 
 ```text
-Memory V2 local rank
+Memory V2 local rank (hit-rate first when reviewing)
   → unread library fallback
     → AI recommend_article (only if library empty; ≤15s client / ≤14s server)
       → cancel / timeout → library or error
 ```
+
+Anti-repeat:
+
+- `resolveRecommendation` always excludes **every history article id** plus feed `seenArticleIds`.
+- Local provider also drops `status === 'Completed'`.
+- Same piece is never re-served; exhausted pool → AI only if nothing unread remains.
+
+Review hit rate:
+
+- With `reviewWords` / due words, ranking key is **unique target hits** (not repeated lemma spam).
+- Score ≈ `hits × 1000 + engineScore`; higher coverage wins over generic learning-zone bulk.
+- Explicit `reviewWords` take precedence over system due words.
 
 Cold start:
 
 - If global proficiency map is small **or** article lemma coverage &lt; 20%, hard unknown / learning-zone filters are skipped.
 - Untracked lemmas are not treated as hard “unknown” until personalization is reliable.
 - Empty proficiency still yields non-zero cold-start scores (topic / CEFR match).
-
-Explicit `reviewWords` are passed into `recommendForReview` and take precedence over system due words.
 
 ## 5. React lifecycle
 

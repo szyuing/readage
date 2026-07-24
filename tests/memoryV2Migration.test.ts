@@ -116,6 +116,18 @@ class MigrationTargetFake implements LocalStorageMigrationTarget {
   }
 }
 
+function exposure(occurrenceId: string): RawWordEvent {
+  return {
+    userId: 'u1',
+    wordId: 'hello',
+    articleId: 'article-1',
+    occurrenceId,
+    eventType: 'exposure',
+    occurredAt: `2026-07-24T12:00:0${occurrenceId === 'occ-1' ? '0' : '1'}.000Z`,
+    localDate: '2026-07-24',
+  };
+}
+
 function state(wordId: string): WordMemoryState {
   return {
     userId: 'u1',
@@ -156,6 +168,10 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
       configurable: true,
       value: source,
     });
+    source.setItem(
+      `${MEMORY_PREFIX}:raw:u1:hello:2026-07-24`,
+      JSON.stringify([exposure('occ-1')])
+    );
     source.setItem(`${MEMORY_PREFIX}:state:u1:first`, JSON.stringify(state('first')));
     source.setItem(`${MEMORY_PREFIX}:state:u1:second`, JSON.stringify(state('second')));
 
@@ -171,7 +187,12 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
     assert.equal(firstState.failedKeys, 1);
     assert.equal(target.states.has('u1|first'), true);
     assert.equal(target.states.has('u1|second'), false);
+    assert.equal(target.raw.get('u1|hello|2026-07-24')?.length, 1);
 
+    source.setItem(
+      `${MEMORY_PREFIX}:raw:u1:hello:2026-07-24`,
+      JSON.stringify([exposure('occ-1'), exposure('occ-2')])
+    );
     target.failStateWordId = null;
     const second = await migrateLocalStorageToIndexedDb(target);
     const secondState = target.meta.get(MIGRATION_META_KEY) as LocalStorageMigrationState;
@@ -179,9 +200,13 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
     assert.equal(second.completed, true);
     assert.equal(second.failedKeys, 0);
     assert.equal(secondState.status, 'completed');
-    assert.equal(secondState.verifiedKeys, 2);
+    assert.equal(secondState.verifiedKeys, 3);
     assert.equal(target.states.has('u1|first'), true);
     assert.equal(target.states.has('u1|second'), true);
+    assert.deepEqual(
+      target.raw.get('u1|hello|2026-07-24')?.map((event) => event.occurrenceId),
+      ['occ-1', 'occ-2']
+    );
   });
 
   it('keeps malformed records retryable instead of claiming completion', async () => {
@@ -218,20 +243,49 @@ describe('Memory V2 localStorage to IndexedDB migration', () => {
     assert.equal(migrationState.legacyProficiency, 'pending-explicit-migration');
   });
 
+  it('retries when a completed marker is malformed or unverified', async () => {
+    const source = new StorageFake();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: source,
+    });
+    source.setItem(`${MEMORY_PREFIX}:state:u1:first`, JSON.stringify(state('first')));
+
+    const target = new MigrationTargetFake();
+    target.meta.set(MIGRATION_META_KEY, {
+      status: 'completed',
+      verifiedKeys: 'not-a-number',
+    });
+
+    const result = await migrateLocalStorageToIndexedDb(target);
+    const migrationState = target.meta.get(MIGRATION_META_KEY) as LocalStorageMigrationState;
+
+    assert.equal(result.completed, true);
+    assert.equal(target.states.has('u1|first'), true);
+    assert.equal(migrationState.scope, 'memory-v2-local-storage');
+    assert.equal(migrationState.verifiedKeys, 1);
+  });
+
   it('does not reinterpret the old boolean marker as verified completion', async () => {
     const source = new StorageFake();
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: source,
     });
+    source.setItem(`${MEMORY_PREFIX}:state:u1:first`, JSON.stringify(state('first')));
+
     const target = new MigrationTargetFake();
     target.meta.set(MIGRATION_META_KEY, true);
 
-    const result = await migrateLocalStorageToIndexedDb(target);
+    const first = await migrateLocalStorageToIndexedDb(target);
+    const second = await migrateLocalStorageToIndexedDb(target);
     const migrationState = target.meta.get(MIGRATION_META_KEY) as LocalStorageMigrationState;
 
-    assert.equal(result.completed, false);
-    assert.equal(result.usable, true);
+    assert.equal(first.completed, false);
+    assert.equal(first.usable, true);
+    assert.equal(second.completed, false);
+    assert.equal(second.usable, true);
+    assert.equal(target.states.size, 0);
     assert.equal(migrationState.status, 'legacy-unverified');
   });
 });

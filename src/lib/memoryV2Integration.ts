@@ -15,6 +15,10 @@ type MemoryEventRecorder = (
   occurrenceId: string,
 ) => Promise<void>;
 
+type MemoryBatchRecorder = (
+  items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>,
+) => Promise<void>;
+
 /** Build the stable id used by both exposure and click for one occurrence. */
 export function createMemoryOccurrenceId(
   articleId: string,
@@ -60,6 +64,44 @@ export async function recordMemoryClickWithExposure({
 }
 
 /**
+ * Optimistically reserve paragraph occurrence ids and roll them back when the
+ * persistent batch write fails, allowing a later visibility event to retry.
+ */
+export async function recordParagraphExposureWithRollback({
+  articleId,
+  paragraphIndex,
+  units,
+  exposedOccurrenceIds,
+  recordExposures,
+}: {
+  articleId: string;
+  paragraphIndex: number;
+  units: readonly ReadingLearningUnit[];
+  exposedOccurrenceIds: Set<string>;
+  recordExposures: MemoryBatchRecorder;
+}): Promise<void> {
+  const pending: Array<{ wordId: string; articleId: string; occurrenceId: string }> = [];
+
+  for (const unit of units) {
+    const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
+    if (exposedOccurrenceIds.has(occurrenceId)) continue;
+    exposedOccurrenceIds.add(occurrenceId);
+    pending.push({ wordId: unit.wordId, articleId, occurrenceId });
+  }
+
+  if (pending.length === 0) return;
+
+  try {
+    await recordExposures(pending);
+  } catch (error) {
+    for (const item of pending) {
+      exposedOccurrenceIds.delete(item.occurrenceId);
+    }
+    throw error;
+  }
+}
+
+/**
  * Complete Memory V2 integration hook for ReadingScreen.
  * It tracks exposed occurrence ids across paragraph visibility and fast clicks.
  */
@@ -82,24 +124,15 @@ export function useMemoryV2Integration(articleId: string) {
       paragraphIndex: number,
       units: readonly ReadingLearningUnit[],
     ) => {
-      const exposedOccurrenceIds = exposureStateRef.current.occurrenceIds;
-      const pending: Array<{ wordId: string; articleId: string; occurrenceId: string }> = [];
-
-      for (const unit of units) {
-        const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
-        if (exposedOccurrenceIds.has(occurrenceId)) continue;
-        exposedOccurrenceIds.add(occurrenceId);
-        pending.push({ wordId: unit.wordId, articleId, occurrenceId });
-      }
-
-      if (pending.length === 0) return;
-
       try {
-        await recordExposures(pending);
+        await recordParagraphExposureWithRollback({
+          articleId,
+          paragraphIndex,
+          units,
+          exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
+          recordExposures,
+        });
       } catch (error) {
-        for (const item of pending) {
-          exposedOccurrenceIds.delete(item.occurrenceId);
-        }
         console.error('Failed to record paragraph exposures:', error);
       }
     },

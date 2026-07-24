@@ -1,0 +1,13 @@
+{
+  "package": "nextword-local-dictionary",
+  "version": "1.0.0",
+  "generatedAt": "2026-07-24T12:42:07.182Z",
+  "files": [
+    {
+      "path": "data/dictionary.pack",
+      "bytes": 113174358,
+      "sha256": "85b7bc6fe7084f23d78487ae8e2b0bcd587b2e55e6943be3fc7e0704dd3dab60"
+    }
+  ],
+  "totalBytes": 113174358
+}

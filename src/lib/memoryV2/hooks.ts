@@ -62,37 +62,20 @@ export function useMemorySystem() {
   }, [store]);
 
   const recordExposure = useCallback(
-    async (wordId: string, articleId: string, occurrenceId: string) => {
-      try {
-        await store.recordExposure(wordId, articleId, occurrenceId);
-      } catch (error) {
-        console.error('Failed to record exposure:', error);
-      }
-    },
+    (wordId: string, articleId: string, occurrenceId: string) =>
+      store.recordExposure(wordId, articleId, occurrenceId),
     [store]
   );
 
   const recordExposures = useCallback(
-    async (
-      items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>
-    ) => {
-      try {
-        await store.recordExposures(items);
-      } catch (error) {
-        console.error('Failed to record exposures:', error);
-      }
-    },
+    (items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>) =>
+      store.recordExposures(items),
     [store]
   );
 
   const recordClick = useCallback(
-    async (wordId: string, articleId: string, occurrenceId: string) => {
-      try {
-        await store.recordClick(wordId, articleId, occurrenceId);
-      } catch (error) {
-        console.error('Failed to record click:', error);
-      }
-    },
+    (wordId: string, articleId: string, occurrenceId: string) =>
+      store.recordClick(wordId, articleId, occurrenceId),
     [store]
   );
 

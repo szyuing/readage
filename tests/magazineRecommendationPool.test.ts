@@ -41,7 +41,7 @@ test('buildRecommendationArticlePool prefers history status while keeping richer
   assert.equal(pool.length, 2);
 });
 
-test('fetchMagazineRecommendationPool caches successful magazine payloads', async () => {
+test('fetchMagazineRecommendationPool caches successful magazine payloads for the same day', async () => {
   clearMagazineRecommendationPoolCache();
   let calls = 0;
   const fetchImpl: typeof fetch = async () => {
@@ -49,19 +49,55 @@ test('fetchMagazineRecommendationPool caches successful magazine payloads', asyn
     return new Response(
       JSON.stringify({
         ok: true,
+        rotationDate: '2026-07-24',
+        universeSize: 100,
         articles: [article('mag:a'), article('mag:b')],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   };
 
-  const first = await fetchMagazineRecommendationPool(10, { fetchImpl });
-  const second = await fetchMagazineRecommendationPool(10, { fetchImpl });
+  const now = new Date(2026, 6, 24, 10, 0, 0);
+  const first = await fetchMagazineRecommendationPool(10, { fetchImpl, now });
+  const second = await fetchMagazineRecommendationPool(10, { fetchImpl, now });
 
   assert.equal(first.source, 'magazine');
+  assert.equal(first.rotationDate, '2026-07-24');
   assert.equal(first.articles.length, 2);
   assert.equal(second.articles.length, 2);
   assert.equal(calls, 1);
+
+  clearMagazineRecommendationPoolCache();
+});
+
+test('fetchMagazineRecommendationPool refetches when the rotation day changes', async () => {
+  clearMagazineRecommendationPoolCache();
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    const rotationDate = calls === 1 ? '2026-07-24' : '2026-07-25';
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        rotationDate,
+        articles: [article(`mag:day-${rotationDate}`)],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  const day1 = await fetchMagazineRecommendationPool(10, {
+    fetchImpl,
+    now: new Date(2026, 6, 24, 23, 0, 0),
+  });
+  const day2 = await fetchMagazineRecommendationPool(10, {
+    fetchImpl,
+    now: new Date(2026, 6, 25, 0, 30, 0),
+  });
+
+  assert.equal(day1.articles[0]?.id, 'mag:day-2026-07-24');
+  assert.equal(day2.articles[0]?.id, 'mag:day-2026-07-25');
+  assert.equal(calls, 2);
 
   clearMagazineRecommendationPoolCache();
 });

@@ -186,6 +186,13 @@ export async function runMagazineSync(options: SyncOptions = {}): Promise<Magazi
     syncState.lastRunAt = finishedAt;
     await saveSyncState(syncState);
     await rebuildIndexFromIssues([...issueMap.values()], finishedAt);
+    // Catalog fingerprint changed — rebuild/load lemma index in the background
+    // so full-catalog recommend stays warm after sync.
+    void import('./lemmaIndex')
+      .then(({ warmMagazineLemmaIndex }) => warmMagazineLemmaIndex('sync'))
+      .catch((err) => {
+        console.error('[magazines] post-sync lemma warm failed', err);
+      });
     progress = null;
     return result;
   } catch (err) {

@@ -16,8 +16,13 @@ import {
 
 export type MemoryStoreListener = () => void;
 
+export type MemoryStoreStatus = 'idle' | 'initializing' | 'ready' | 'degraded';
+
 export interface MemoryStoreSnapshot {
   ready: boolean;
+  status: MemoryStoreStatus;
+  retryable: boolean;
+  lifecycleError: string | null;
   version: number;
   storageError: string | null;
   userId: string;
@@ -50,6 +55,8 @@ export class MemoryV2Store {
   readonly timezone: string;
 
   private ready = false;
+  private status: MemoryStoreStatus = 'idle';
+  private lifecycleError: string | null = null;
   private version = 0;
   private storageError: string | null = null;
   private listeners = new Set<MemoryStoreListener>();
@@ -58,7 +65,8 @@ export class MemoryV2Store {
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   private midnightTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly now: () => Date;
-  private started = false;
+  private storageInitialized = false;
+  private startJob: Promise<void> | null = null;
   private readonly injectedStorage: boolean;
 
   constructor(options: MemoryStoreOptions = {}) {
@@ -74,6 +82,9 @@ export class MemoryV2Store {
   getSnapshot(): MemoryStoreSnapshot {
     return {
       ready: this.ready,
+      status: this.status,
+      retryable: this.status === 'degraded',
+      lifecycleError: this.lifecycleError,
       version: this.version,
       storageError: this.storageError,
       userId: this.userId,
@@ -89,29 +100,57 @@ export class MemoryV2Store {
     };
   };
 
-  /** Start historical finalization and day-boundary watchers (idempotent). */
+  /** Start storage and historical finalization. Failed starts remain retryable. */
   async start(): Promise<void> {
-    if (this.started) {
-      await this.ensureReady();
+    if (this.ready) {
+      this.scheduleMidnightCheck();
       return;
     }
-    this.started = true;
-    // Prefer IndexedDB when available (no-op if a custom storage was injected).
-    if (!this.injectedStorage) {
-      try {
-        const preferred = await createPreferredMemoryStorage();
-        this.system = new MemorySystemV2(preferred);
-      } catch (error) {
-        console.warn('Preferred memory storage init failed; keeping constructor storage.', error);
-      }
+    if (this.startJob) {
+      await this.startJob;
+      return;
     }
-    await this.finalizeIfNeeded();
-    this.scheduleMidnightCheck();
+
+    const job = (async () => {
+      this.status = 'initializing';
+      this.lifecycleError = null;
+      this.bumpVersion();
+
+      if (!this.storageInitialized) {
+        // Prefer IndexedDB when available (no-op if a custom storage was injected).
+        if (!this.injectedStorage) {
+          try {
+            const preferred = await createPreferredMemoryStorage();
+            this.system = new MemorySystemV2(preferred);
+          } catch (error) {
+            console.warn(
+              'Preferred memory storage init failed; keeping constructor storage.',
+              error
+            );
+          }
+        }
+        this.storageInitialized = true;
+      }
+
+      await this.finalizeIfNeeded();
+      this.scheduleMidnightCheck();
+    })();
+
+    this.startJob = job;
+    try {
+      await job;
+    } finally {
+      if (this.startJob === job) this.startJob = null;
+    }
   }
 
   async ensureReady(): Promise<void> {
     if (this.ready) return;
-    await this.finalizeIfNeeded();
+    if (this.startJob) {
+      await this.startJob;
+      return;
+    }
+    await this.start();
   }
 
   /**
@@ -129,12 +168,16 @@ export class MemoryV2Store {
         await this.system.finalizeHistoricalDates(this.userId, this.timezone);
         this.lastSeenLocalDate = getLocalDateInTimeZone(this.now(), this.timezone);
         this.storageError = null;
+        this.lifecycleError = null;
         this.ready = true;
+        this.status = 'ready';
         this.bumpVersion();
       } catch (error) {
         console.error('Failed to finalize historical dates:', error);
-        // Still mark ready so queries can proceed with best-effort data.
-        this.ready = true;
+        this.ready = false;
+        this.status = 'degraded';
+        this.lifecycleError =
+          error instanceof Error ? error.message : 'Memory initialization failed';
         this.bumpVersion();
         throw error;
       } finally {
@@ -151,9 +194,12 @@ export class MemoryV2Store {
    */
   async checkDayBoundary(): Promise<boolean> {
     const today = getLocalDateInTimeZone(this.now(), this.timezone);
-    if (today === this.lastSeenLocalDate) {
-      return false;
+    const crossedDayBoundary = today !== this.lastSeenLocalDate;
+    if (!this.ready) {
+      await this.ensureReady();
+      return crossedDayBoundary;
     }
+    if (!crossedDayBoundary) return false;
     await this.finalizeIfNeeded();
     return true;
   }
@@ -281,16 +327,18 @@ export class MemoryV2Store {
     if (this.notifyTimer) clearTimeout(this.notifyTimer);
     if (this.midnightTimer) clearTimeout(this.midnightTimer);
     this.listeners.clear();
-    this.started = false;
+    this.startJob = null;
   }
 }
 
 let defaultStore: MemoryV2Store | null = null;
 
 /** Process-wide default store used by hooks and non-React callers. */
-export function getDefaultMemoryStore(): MemoryV2Store {
+export function getDefaultMemoryStore(
+  options: MemoryStoreOptions = {}
+): MemoryV2Store {
   if (!defaultStore) {
-    defaultStore = new MemoryV2Store();
+    defaultStore = new MemoryV2Store(options);
   }
   return defaultStore;
 }

@@ -204,7 +204,21 @@ describe('MemoryV2Store', () => {
       /temporary IndexedDB failure/
     );
 
-    await store.start();
+    let finishRetry: (() => void) | null = null;
+    store.system.finalizeHistoricalDates = async () => {
+      attempts += 1;
+      await new Promise<void>((resolve) => {
+        finishRetry = resolve;
+      });
+    };
+
+    const retry = store.start();
+    assert.equal(store.getSnapshot().ready, false);
+    assert.equal(store.getSnapshot().status, 'initializing');
+    assert.equal(store.getSnapshot().retryable, false);
+    assert.equal(store.getSnapshot().lifecycleError, null);
+    finishRetry?.();
+    await retry;
 
     assert.equal(attempts, 2);
     assert.equal(store.getSnapshot().ready, true);

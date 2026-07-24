@@ -355,6 +355,27 @@ for (const count of [81, 100]) {
   });
 }
 
+test('terminal history is capped only after all queued jobs have run', async () => {
+  const completed: string[] = [];
+  const queue = new ArticleImportQueue();
+  queue.configure({
+    concurrency: 8,
+    fetcher: mockFetcher([]) as typeof fetch,
+    onComplete: ({ articleId }) => completed.push(articleId),
+  });
+
+  for (let i = 0; i < 100; i += 1) {
+    queue.enqueue(makeArticle(`history-${i}`, [`Paragraph ${i}.`]), 'magazine');
+  }
+
+  await waitFor(() => completed.length === 100, 'all jobs should finish before history is trimmed');
+  const snapshot = queue.getSnapshot();
+  assert.equal(completed.length, 100);
+  assert.equal(snapshot.pendingCount, 0);
+  assert.equal(snapshot.jobs.length, 80);
+  assert.equal(snapshot.jobs.every((job) => job.status === 'done'), true);
+});
+
 test('cancelAll keeps the running slot occupied until its late promise settles', async () => {
   const firstGate = createDeferred();
   const thirdGate = createDeferred();
@@ -377,21 +398,80 @@ test('cancelAll keeps the running slot occupied until its late promise settles',
   queue.enqueue(makeArticle('cancel-second', ['Second.']), 'manual');
   await waitFor(() => started.includes('cancel-first'), 'first cancelled job did not start');
 
-  assert.equal(queue.cancelAll(), 2);
-  queue.enqueue(makeArticle('cancel-third', ['Third.']), 'manual');
+  const cancelled = queue.cancelAll();
   queue.enqueue(makeArticle('cancel-fourth', ['Fourth.']), 'manual');
+  queue.enqueue(makeArticle('cancel-third', ['Third.']), 'manual');
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(started, ['cancel-first']);
+  const startedBeforeFirstSettled = [...started];
 
   firstGate.resolve();
   await waitFor(() => started.includes('cancel-third'), 'third job did not start after late settle');
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(started, ['cancel-first', 'cancel-third']);
+  const startedAfterFirstSettled = [...started];
 
   thirdGate.resolve();
   await waitFor(() => started.includes('cancel-fourth'), 'fourth job did not wait for third');
   fourthGate.resolve();
   await waitFor(() => queue.getSnapshot().pendingCount === 0, 'cancel regression queue did not drain');
+
+  assert.equal(cancelled, 2);
+  assert.deepEqual(startedBeforeFirstSettled, ['cancel-first']);
+  assert.deepEqual(startedAfterFirstSettled, ['cancel-first', 'cancel-third']);
+});
+
+test('a late cancelled promise does not clear a retry of the same article', async () => {
+  const oldGate = createDeferred();
+  const retryGate = createDeferred();
+  const gates = [oldGate, retryGate];
+  let translateCalls = 0;
+  const completed: string[] = [];
+  const queue = new ArticleImportQueue();
+  queue.configure({
+    concurrency: 2,
+    fetcher: (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        intent: string;
+        paragraphs?: string[];
+      };
+      if (body.intent !== 'translate_article') {
+        throw new Error(`unexpected intent: ${body.intent}`);
+      }
+      const gate = gates[translateCalls];
+      translateCalls += 1;
+      await gate.promise;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          intent: 'translate_article',
+          result: { translations: (body.paragraphs || []).map(() => '?') },
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch,
+    onComplete: ({ articleId }) => completed.push(articleId),
+  });
+
+  const article = makeArticle('cancel-retry', ['Retry me.']);
+  article.source = 'level_rewrite';
+  article.levelRating = { level: 'B1', difficultyScore: 40, summary: 'locked' };
+
+  queue.enqueue(article, 'manual');
+  await waitFor(() => translateCalls === 1, 'original job did not start');
+  assert.equal(queue.cancel(article.id), true);
+  assert.equal(queue.retry(article).reason, 'queued');
+  await waitFor(() => translateCalls === 2, 'retry job did not start');
+
+  oldGate.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const retryStillTracked = queue.isInFlight(article.id);
+  const retryStatus = queue.getJob(article.id)?.status;
+
+  retryGate.resolve();
+  await waitFor(() => queue.getSnapshot().pendingCount === 0, 'retry queue did not drain');
+
+  assert.equal(retryStillTracked, true);
+  assert.equal(retryStatus, 'processing');
+  assert.deepEqual(completed, [article.id]);
 });
 
 test('failStaleJobs does not free a slot or let a late promise overwrite failure', async () => {
@@ -416,16 +496,22 @@ test('failStaleJobs does not free a slot or let a late promise overwrite failure
   queue.enqueue(makeArticle('stale-second', ['Second.']), 'manual');
   await waitFor(() => started.includes('stale-first'), 'first stale job did not start');
 
-  assert.equal(queue.failStaleJobs(0), 1);
+  const failed = queue.failStaleJobs(0);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(started, ['stale-first']);
-  assert.equal(queue.getJob('stale-first')?.status, 'failed');
+  const startedBeforeFirstSettled = [...started];
+  const statusBeforeFirstSettled = queue.getJob('stale-first')?.status;
 
   firstGate.resolve();
   await waitFor(() => started.includes('stale-second'), 'second job did not start after stale settle');
-  assert.equal(queue.getJob('stale-first')?.status, 'failed');
-  assert.equal(completed.includes('stale-first'), false);
+  const statusAfterFirstSettled = queue.getJob('stale-first')?.status;
+  const firstCompleted = completed.includes('stale-first');
 
   secondGate.resolve();
   await waitFor(() => queue.getSnapshot().pendingCount === 0, 'stale regression queue did not drain');
+
+  assert.equal(failed, 1);
+  assert.deepEqual(startedBeforeFirstSettled, ['stale-first']);
+  assert.equal(statusBeforeFirstSettled, 'failed');
+  assert.equal(statusAfterFirstSettled, 'failed');
+  assert.equal(firstCompleted, false);
 });

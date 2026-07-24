@@ -245,6 +245,20 @@ export interface GrammarExplanation {
   grammarRules: string[];
   exampleSentences: string[];
   vietnameseMeaning?: string;
+  /** Origin of the explanation: local offline ECDICT or LLM. */
+  source?: 'dictionary' | 'ai';
+  /** CEFR band from the local dictionary (A1–C2). */
+  cefrLevel?: string;
+  /** Curriculum/exam tags from ECDICT (中考/高考/CET4…). */
+  tags?: string[];
+  /** Multi-sense bilingual definitions from the dictionary. */
+  senses?: Array<{ partOfSpeech: string; definition: string; definitionZh?: string }>;
+  /** Inflections/word forms (过去式 ran, 复数 runs…). */
+  exchanges?: Array<{ label: string; value: string }>;
+  /** Common collocations with Chinese glosses. */
+  collocations?: Array<{ en: string; zh: string }>;
+  /** Words in the same family (strong derivations first). */
+  relatedWords?: string[];
 }
 
 export interface TranslationResult {

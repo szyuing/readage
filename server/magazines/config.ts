@@ -6,6 +6,12 @@ export const GITHUB_REPO_REF = process.env.MAGAZINE_REPO_REF || 'master';
 export const GITHUB_API_BASE = 'https://api.github.com';
 export const USER_AGENT = 'english-ai-active-reading-app';
 
+const MAX_ISSUES_PER_SOURCE = 30;
+const DEFAULT_GITHUB_API_TIMEOUT_MS = 15_000;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const DEFAULT_DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024;
+const SAFE_ISSUE_LABEL = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
+
 export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   {
     id: 'economist',
@@ -37,10 +43,31 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
   },
 ];
 
+function positiveIntegerFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 export function getMaxIssuesPerSource(override?: number): number {
-  if (typeof override === 'number' && override > 0) return Math.min(override, 30);
+  if (Number.isSafeInteger(override) && (override as number) > 0) {
+    return Math.min(override as number, MAX_ISSUES_PER_SOURCE);
+  }
   const fromEnv = Number(process.env.MAGAZINE_MAX_ISSUES_PER_SOURCE || 4);
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.min(fromEnv, 30) : 4;
+  return Number.isSafeInteger(fromEnv) && fromEnv > 0
+    ? Math.min(fromEnv, MAX_ISSUES_PER_SOURCE)
+    : 4;
+}
+
+export function getGitHubApiTimeoutMs(): number {
+  return positiveIntegerFromEnv('MAGAZINE_GITHUB_API_TIMEOUT_MS', DEFAULT_GITHUB_API_TIMEOUT_MS);
+}
+
+export function getMagazineDownloadTimeoutMs(): number {
+  return positiveIntegerFromEnv('MAGAZINE_DOWNLOAD_TIMEOUT_MS', DEFAULT_DOWNLOAD_TIMEOUT_MS);
+}
+
+export function getMagazineDownloadMaxBytes(): number {
+  return positiveIntegerFromEnv('MAGAZINE_DOWNLOAD_MAX_BYTES', DEFAULT_DOWNLOAD_MAX_BYTES);
 }
 
 export function getSyncCronExpression(): string {
@@ -70,7 +97,29 @@ export function makeIssueId(sourceId: string, issueLabel: string): string {
   return `${sourceId}:${issueLabel}`;
 }
 
+export interface ParsedIssueId {
+  sourceId: string;
+  issueLabel: string;
+}
+
+export function parseIssueId(issueId: string): ParsedIssueId | null {
+  const separator = issueId.indexOf(':');
+  if (separator <= 0 || separator !== issueId.lastIndexOf(':')) return null;
+
+  const sourceId = issueId.slice(0, separator);
+  const issueLabel = issueId.slice(separator + 1);
+  if (!getSourceById(sourceId) || !SAFE_ISSUE_LABEL.test(issueLabel)) return null;
+
+  return { sourceId, issueLabel };
+}
+
 export function issueFileKey(sourceId: string, issueLabel: string): string {
+  if (!getSourceById(sourceId)) {
+    throw new Error(`Invalid source id: ${sourceId}`);
+  }
+  if (!SAFE_ISSUE_LABEL.test(issueLabel)) {
+    throw new Error(`Invalid issue label: ${issueLabel}`);
+  }
   return `${sourceId}_${issueLabel.replace(/[.:]/g, '-')}`;
 }
 

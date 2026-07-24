@@ -101,3 +101,21 @@ export function selectLibraryFallback(
     return (stored?.status ?? candidate.status) !== 'Completed';
   }) ?? null;
 }
+
+/**
+ * Articles the user has already opened (history) plus any feed-session excludes.
+ * Used so recommendation never re-serves the same piece.
+ */
+export function collectExcludedArticleIds(
+  explicitExcludeIds: readonly string[],
+  history: readonly Article[]
+): Set<string> {
+  const excluded = new Set<string>();
+  for (const id of explicitExcludeIds) {
+    if (id) excluded.add(id);
+  }
+  for (const article of history) {
+    if (article?.id) excluded.add(article.id);
+  }
+  return excluded;
+}

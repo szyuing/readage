@@ -1,4 +1,4 @@
-﻿import { afterEach, describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs/promises';
 import os from 'os';

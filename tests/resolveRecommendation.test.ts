@@ -26,6 +26,7 @@ describe('resolveRecommendationArticle chain', () => {
       {
         library: [local],
         history: [],
+        useFullCatalog: false,
         localProvider: async () => local,
         libraryFallback: () => {
           libraryCalls += 1;
@@ -53,6 +54,7 @@ describe('resolveRecommendationArticle chain', () => {
       {
         library: [libraryHit],
         history: [],
+        useFullCatalog: false,
         localProvider: async () => null,
         libraryFallback: () => libraryHit,
         aiPost: async () => {
@@ -75,6 +77,7 @@ describe('resolveRecommendationArticle chain', () => {
       {
         library: [],
         history: [],
+        useFullCatalog: false,
         localProvider: async () => null,
         libraryFallback: () => null,
         aiPost: async () => {
@@ -109,6 +112,7 @@ describe('resolveRecommendationArticle chain', () => {
           {
             library: [],
             history: [],
+            useFullCatalog: false,
             localProvider: async () => null,
             libraryFallback: () => null,
             aiPost: async () => {
@@ -118,5 +122,107 @@ describe('resolveRecommendationArticle chain', () => {
         ),
       (error: unknown) => error instanceof Error && error.name === 'AbortError'
     );
+  });
+
+  it('auto-excludes history article ids so the same piece is never re-recommended', async () => {
+    const seenInHistory = article('already-read', 'Completed');
+    const fresh = article('fresh-local', 'In Progress');
+    let receivedExclude: string[] = [];
+
+    const resolved = await resolveRecommendationArticle(
+      { topic: 'Idioms', reviewWords: ['x'], excludeArticleIds: ['feed-seen'] },
+      {
+        library: [seenInHistory, fresh],
+        history: [seenInHistory],
+        useFullCatalog: false,
+        localProvider: async (request) => {
+          receivedExclude = request.excludeArticleIds;
+          // Simulate provider respecting exclude list.
+          if (request.excludeArticleIds.includes('fresh-local')) return null;
+          if (request.excludeArticleIds.includes('already-read')) {
+            return fresh;
+          }
+          return seenInHistory;
+        },
+        libraryFallback: (_library, _history, excluded) => {
+          if (excluded.has('fresh-local')) return null;
+          return fresh;
+        },
+        aiPost: async () => {
+          throw new Error('AI should not run');
+        },
+      }
+    );
+
+    assert.ok(receivedExclude.includes('already-read'));
+    assert.ok(receivedExclude.includes('feed-seen'));
+    assert.equal(resolved?.article.id, 'fresh-local');
+  });
+
+  it('ranks the full lemma catalog then hydrates only the winning article', async () => {
+    const hydrated = article('mag:full-1', 'In Progress');
+    hydrated.content = ['policy and trade shape markets'];
+    let hydrateCalls = 0;
+    let aiCalls = 0;
+
+    const resolved = await resolveRecommendationArticle(
+      { topic: 'Current Affairs', reviewWords: ['policy'], excludeArticleIds: [] },
+      {
+        library: [],
+        history: [],
+        useFullCatalog: true,
+        loadLemmaIndex: async () => ({
+          version: 1 as const,
+          fingerprint: 'test',
+          builtAt: new Date().toISOString(),
+          articleCount: 2,
+          vocab: ['policy', 'trade', 'markets', 'banana'],
+          articles: [
+            {
+              id: 'mag:full-1',
+              title: 'Trade',
+              level: 'B2',
+              topic: 'Current Affairs',
+              lemmaIndices: [0, 1, 2],
+            },
+            {
+              id: 'mag:full-2',
+              title: 'Fruit',
+              level: 'A2',
+              topic: 'Food',
+              lemmaIndices: [3],
+            },
+          ],
+        }),
+        loadArticleById: async (id) => {
+          hydrateCalls += 1;
+          return id === hydrated.id ? hydrated : null;
+        },
+        rankCatalog: async (candidates) =>
+          candidates
+            .map((candidate) => ({
+              articleId: candidate.article.id,
+              score: candidate.lemmas.includes('policy') ? 100 : 1,
+              dueWordsCount: candidate.lemmas.includes('policy') ? 1 : 0,
+              learningZoneCount: 0,
+              consolidationZoneCount: 0,
+              unknownWordsCount: 0,
+              averageMemoryScore: 0,
+              reason: 'test',
+            }))
+            .sort((a, b) => b.score - a.score),
+        localProvider: async () => null,
+        libraryFallback: () => null,
+        aiPost: async () => {
+          aiCalls += 1;
+          throw new Error('AI should not run');
+        },
+      }
+    );
+
+    assert.equal(resolved?.source, 'full_catalog');
+    assert.equal(resolved?.article.id, 'mag:full-1');
+    assert.equal(hydrateCalls, 1);
+    assert.equal(aiCalls, 0);
   });
 });

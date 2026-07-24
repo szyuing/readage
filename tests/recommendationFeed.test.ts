@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Article } from '../src/types';
 import {
   beginRecommendationPrefetch,
+  collectExcludedArticleIds,
   consumeQueuedRecommendation,
   endRecommendationFeed,
   failRecommendationPrefetch,
@@ -10,7 +11,6 @@ import {
   selectLibraryFallback,
   startRecommendationFeed,
 } from '../src/lib/recommendationFeed';
-
 function article(id: string, status: Article['status'] = 'In Progress'): Article {
   return {
     id,
@@ -69,6 +69,12 @@ test('library fallback skips completed and already-seen articles in stable order
     selectLibraryFallback(library, [...history, article('lib-3', 'Completed')], new Set(['lib-2'])),
     null
   );
+});
+
+test('collectExcludedArticleIds merges feed excludes with every history id', () => {
+  const history = [article('h1', 'Completed'), article('h2', 'In Progress')];
+  const excluded = collectExcludedArticleIds(['feed-a', 'h1'], history);
+  assert.deepEqual([...excluded].sort(), ['feed-a', 'h1', 'h2']);
 });
 
 

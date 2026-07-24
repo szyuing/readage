@@ -32,13 +32,9 @@ export function MemoryProvider({
   storeOptions,
 }: MemoryProviderProps) {
   const store = useMemo(
-    () => injectedStore ?? getDefaultMemoryStore(),
-    [injectedStore]
+    () => injectedStore ?? getDefaultMemoryStore(storeOptions),
+    [injectedStore, storeOptions]
   );
-
-  // Apply options only for a freshly constructed default path is rare;
-  // callers that need custom storage should pass `store`.
-  void storeOptions;
 
   useEffect(() => {
     void store.start().catch((error) => {

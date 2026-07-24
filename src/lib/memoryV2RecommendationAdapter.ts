@@ -10,6 +10,7 @@ import {
   ArticleCandidate,
   RecommendationScore,
   scheduleReviewArticles,
+  scoreArticlesForReview,
   diversifyRecommendations,
 } from './memoryV2/recommendation';
 import { memoryV2 } from './memoryV2/hooks';
@@ -70,6 +71,11 @@ export interface MemoryV2RecommendationOptions {
   recentArticleIds?: string[];
   /** 多样性窗口大小 */
   diversityWindow?: number;
+  /**
+   * When false, skip hard candidate filtering and rely on score penalties only.
+   * Preferred for full magazine catalogs (C1 text + sparse personal memory).
+   */
+  applyHardFilters?: boolean;
 }
 
 /**
@@ -140,40 +146,41 @@ export class MemoryV2RecommendationAdapter {
   }
 
   /**
-   * 推荐文章
+   * Rank pre-built ArticleCandidate rows (e.g. full magazine lemma index).
+   * Avoids re-tokenizing article bodies on every recommend click.
    */
-  async recommend(
-    candidates: Article[],
+  async recommendCandidates(
+    articleCandidates: ArticleCandidate[],
     options: MemoryV2RecommendationOptions = {}
   ): Promise<RecommendationScore[]> {
     const {
       limit = 5,
       recentArticleIds = [],
       diversityWindow = 5,
+      applyHardFilters = true,
     } = options;
 
-    // 获取用户ID和记忆系统
     const userId = memoryV2.getUserId();
     const system = memoryV2.getSystem();
-
-    // 获取所有单词的熟练度
     const allProficiency = await system.getAllWordProficiency(userId);
     const proficiencyMap = new Map(
-      allProficiency.map(p => [p.wordId, p])
+      allProficiency.map((p) => [p.wordId, p])
     );
 
-    // 转换为候选文章
-    const articleCandidates = convertToArticleCandidates(candidates);
+    const filtered = applyHardFilters
+      ? this.engine.filterCandidates(articleCandidates, proficiencyMap)
+      : articleCandidates.filter((candidate) => candidate.lemmas.length > 0);
 
-    // 过滤掉不适合的文章
-    const filtered = this.engine.filterCandidates(articleCandidates, proficiencyMap);
+    let recommendations = this.engine.recommend(
+      filtered,
+      proficiencyMap,
+      Math.max(limit * 2, limit)
+    );
 
-    // 推荐文章
-    let recommendations = this.engine.recommend(filtered, proficiencyMap, limit * 2);
-
-    // 应用多样性推荐
     if (recentArticleIds.length > 0) {
-      const articlesMap = new Map(candidates.map(a => [a.id, a]));
+      const articlesMap = new Map(
+        articleCandidates.map((candidate) => [candidate.article.id, candidate.article])
+      );
       recommendations = diversifyRecommendations(
         recommendations,
         articlesMap,
@@ -182,8 +189,18 @@ export class MemoryV2RecommendationAdapter {
       );
     }
 
-    // 返回前 N 个
     return recommendations.slice(0, limit);
+  }
+
+  /**
+   * 推荐文章
+   */
+  async recommend(
+    candidates: Article[],
+    options: MemoryV2RecommendationOptions = {}
+  ): Promise<RecommendationScore[]> {
+    const articleCandidates = convertToArticleCandidates(candidates);
+    return this.recommendCandidates(articleCandidates, options);
   }
 
   /**
@@ -257,6 +274,7 @@ export class MemoryV2RecommendationAdapter {
     }
 
     const articleCandidates = convertToArticleCandidates(candidates);
+    // Unique-hit schedule first (drops zero-hit articles).
     const reviewArticles = scheduleReviewArticles(
       priorityWords,
       articleCandidates,
@@ -267,9 +285,13 @@ export class MemoryV2RecommendationAdapter {
       return this.recommend(candidates, { limit });
     }
 
-    return this.engine.recommend(
+    // Hit rate dominates ranking; engine score only breaks ties / fine-tunes.
+    const targetIds = priorityWords.map((word) => word.wordId);
+    return scoreArticlesForReview(
       reviewArticles,
+      targetIds,
       proficiencyMap,
+      this.engine,
       limit
     );
   }
@@ -303,6 +325,98 @@ export function createMemoryV2Adapter(
 }
 
 /**
+ * Rank a full magazine lemma catalog and return ordered scores (ids only).
+ * Uses soft filtering so C1 magazines are not wiped out by sparse personal memory.
+ */
+export async function rankMagazineLemmaCandidates(
+  candidates: ArticleCandidate[],
+  options: MemoryV2RecommendationOptions & {
+    reviewWords?: readonly string[];
+    excludeArticleIds?: readonly string[];
+  } = {}
+): Promise<RecommendationScore[]> {
+  const {
+    reviewWords = [],
+    excludeArticleIds = [],
+    limit = 20,
+    strategy = reviewWords.length > 0 ? 'review-first' : 'balanced',
+    ...rest
+  } = options;
+
+  const excluded = new Set(excludeArticleIds.filter(Boolean));
+  const recentIds = Array.from(excludeArticleIds);
+  const filtered = candidates.filter(
+    (candidate) => candidate.article.id && !excluded.has(candidate.article.id)
+  );
+  if (filtered.length === 0) return [];
+
+  const adapter = createMemoryV2Adapter({
+    strategy,
+    ...rest,
+    preferredTopics: rest.preferredTopics,
+    recentArticleIds: recentIds,
+    // Full-catalog C1 text: hard unknown-ratio filters collapse the pool to ~0.
+    applyHardFilters: rest.applyHardFilters ?? false,
+    maxUnknownWordsRatio: rest.maxUnknownWordsRatio ?? 0.95,
+    minLearningZoneWords: rest.minLearningZoneWords ?? 1,
+  });
+
+  if (reviewWords.length > 0) {
+    // Prefer articles containing target review lemmas, then score.
+    const target = new Set(
+      reviewWords.map((w) => w.trim().toLowerCase()).filter(Boolean)
+    );
+    const hitById = new Map<string, number>();
+    const withTargets = filtered
+      .map((candidate) => {
+        const hit = candidate.lemmas.filter((lemma) => target.has(lemma)).length;
+        hitById.set(candidate.article.id, hit);
+        return { candidate, hit };
+      })
+      .filter((row) => row.hit > 0)
+      .sort((a, b) => b.hit - a.hit)
+      .map((row) => row.candidate);
+
+    const pool = withTargets.length > 0 ? withTargets : filtered;
+    const ranked = await adapter.recommendCandidates(pool, {
+      ...rest,
+      strategy: 'review-first',
+      // Rank a wider head so target-hit boost can surface the best coverage.
+      limit: Math.max(limit * 3, 48),
+      recentArticleIds: recentIds,
+      applyHardFilters: false,
+    });
+
+    // Cold-start proficiency maps often give flat base scores; boost by explicit
+    // review-word coverage so full-catalog ranking still prefers target hits.
+    const boosted = ranked
+      .map((score) => {
+        const hits = hitById.get(score.articleId) ?? 0;
+        return {
+          ...score,
+          dueWordsCount: Math.max(score.dueWordsCount, hits),
+          score: score.score + hits * 40,
+          reason:
+            hits > 0
+              ? `${score.reason || '全库推荐'} · 命中 ${hits} 个复习词`
+              : score.reason,
+        };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return boosted.slice(0, limit);
+  }
+
+  return adapter.recommendCandidates(filtered, {
+    ...rest,
+    strategy,
+    limit,
+    recentArticleIds: recentIds,
+    applyHardFilters: false,
+  });
+}
+
+/**
  * 将 Memory V2.2 推荐集成到现有的 RecommendationProvider 接口
  */
 export async function memoryV2RecommendationProvider(
@@ -311,11 +425,15 @@ export async function memoryV2RecommendationProvider(
   options: MemoryV2RecommendationOptions = {}
 ): Promise<Article | null> {
   const { topic, reviewWords, excludeArticleIds } = request;
+  const excluded = new Set(excludeArticleIds.filter(Boolean));
 
-  // 过滤掉已排除的文章
-  const candidates = articleLibrary.filter(
-    article => !excludeArticleIds.includes(article.id)
-  );
+  // Drop feed-session excludes and already-finished pieces so the same article
+  // is never re-served for review ranking.
+  const candidates = articleLibrary.filter((article) => {
+    if (!article?.id || excluded.has(article.id)) return false;
+    if (article.status === 'Completed') return false;
+    return true;
+  });
 
   if (candidates.length === 0) {
     return null;

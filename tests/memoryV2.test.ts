@@ -480,17 +480,17 @@ function exposureEvent({
 }
 
 describe('Memory V2.2 - Batch event persistence', () => {
-  it('preserves same-word evidence recorded by an earlier paragraph batch', async () => {
+  it('preserves single-event evidence when a later paragraph uses a batch write', async () => {
     const storage = new EvidenceStorageFake();
     const system = new MemorySystemV2(storage as unknown as MemoryStorage);
 
-    await system.recordBatchEvents([
+    await system.recordEvent(
       exposureEvent({
         articleId: 'article-A',
         occurrenceId: 'article-A:p0:w0:constraint',
         occurredAt: '2026-07-24T10:00:00Z',
       }),
-    ]);
+    );
     await system.recordBatchEvents([
       exposureEvent({
         articleId: 'article-A',
@@ -510,12 +510,18 @@ describe('Memory V2.2 - Batch event persistence', () => {
     const storage = new EvidenceStorageFake();
     const system = new MemorySystemV2(storage as unknown as MemoryStorage);
 
+    const firstExposure = exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    });
     await system.recordBatchEvents([
-      exposureEvent({
-        articleId: 'article-A',
-        occurrenceId: 'article-A:p0:w0:constraint',
-        occurredAt: '2026-07-24T10:00:00Z',
-      }),
+      firstExposure,
+      {
+        ...firstExposure,
+        eventType: 'click',
+        occurredAt: '2026-07-24T10:00:01Z',
+      },
     ]);
     await system.recordBatchEvents([
       exposureEvent({
@@ -527,6 +533,8 @@ describe('Memory V2.2 - Batch event persistence', () => {
 
     const dailyEvidence = [...storage.daily.values()][0];
     assert.equal(dailyEvidence.validExposureCount, 2);
+    assert.equal(dailyEvidence.clickedOccurrenceCount, 1);
+    assert.equal(dailyEvidence.pendingGrade, 'Again');
     assert.equal(dailyEvidence.articleCount, 2);
     assert.deepEqual(
       dailyEvidence.articleEvidence.map((item) => item.articleId).sort(),

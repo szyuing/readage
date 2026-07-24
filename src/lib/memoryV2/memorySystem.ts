@@ -96,31 +96,30 @@ export class MemorySystemV2 {
   async recordBatchEvents(events: RawWordEvent[]): Promise<void> {
     if (events.length === 0) return;
 
-    // 1. 批量保存原始事件
+    // 1. Persist the raw batch before rebuilding derived evidence.
     await this.storage.saveRawEvents(events);
 
-    // 2. 按日期分组
-    const dateGroups = new Map<string, RawWordEvent[]>();
+    // 2. Collect each affected user + word + date combination.
+    const affectedWordDates = new Map<string, RawWordEvent>();
     for (const event of events) {
-      const key = `${event.userId}|${event.localDate}`;
-      if (!dateGroups.has(key)) {
-        dateGroups.set(key, []);
-      }
-      dateGroups.get(key)!.push(event);
+      const key = JSON.stringify([event.userId, event.wordId, event.localDate]);
+      affectedWordDates.set(key, event);
     }
 
-    // 3. 每个日期批量聚合
-    for (const [key, dateEvents] of dateGroups.entries()) {
-      const dailyEvidences = batchAggregateDailyEvidence(dateEvents);
+    // 3. Rebuild from all persisted events so existing same-day evidence is preserved.
+    for (const event of affectedWordDates.values()) {
+      const persistedEvents = await this.storage.getRawEventsByDate(
+        event.userId,
+        event.wordId,
+        event.localDate
+      );
+      const dailyEvidence = batchAggregateDailyEvidence(persistedEvents).get(event.wordId);
+      if (!dailyEvidence) continue;
 
-      // 4. 保存每日词据
-      for (const evidence of dailyEvidences.values()) {
-        await this.storage.saveDailyEvidence(evidence);
-
-        // 5. 保存文章级词据
-        for (const articleEvidence of evidence.articleEvidence) {
-          await this.storage.saveArticleEvidence(articleEvidence);
-        }
+      // 4. Persist the complete daily and per-article evidence.
+      await this.storage.saveDailyEvidence(dailyEvidence);
+      for (const articleEvidence of dailyEvidence.articleEvidence) {
+        await this.storage.saveArticleEvidence(articleEvidence);
       }
     }
   }

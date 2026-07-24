@@ -1,6 +1,6 @@
 /**
  * 文章推荐算法 V2.2
- * 基于 Memory Score 和 FSRS 状态的智能推荐
+ * 基于 Memory Score �?FSRS 状态的智能推荐
  */
 
 import { WordProficiencyView } from './memorySystem';
@@ -16,18 +16,18 @@ export interface Article {
 
 export interface ArticleCandidate {
   article: Article;
-  /** 文章中的所有词形还原后的单词列表 */
+  /** 文章中的所有词形还原后的单词列�?*/
   lemmas: string[];
 }
 
 export interface RecommendationScore {
   articleId: string;
   score: number;
-  /** 需要复习的单词数 */
+  /** 需要复习的单词�?*/
   dueWordsCount: number;
-  /** L0-L2 的单词数（学习区） */
+  /** L0-L2 的单词数（学习区�?*/
   learningZoneCount: number;
-  /** L3-L4 的单词数（巩固区） */
+  /** L3-L4 的单词数（巩固区�?*/
   consolidationZoneCount: number;
   /** 未知单词数（无记忆状态） */
   unknownWordsCount: number;
@@ -42,17 +42,17 @@ export interface RecommendationParams {
   userLevel?: string;
   /** 用户感兴趣的主题 */
   preferredTopics?: string[];
-  /** 优先推荐包含到期单词的文章 */
+  /** 优先推荐包含到期单词的文�?*/
   prioritizeDueWords?: boolean;
-  /** 学习区单词占比权重 */
+  /** 学习区单词占比权�?*/
   learningZoneWeight?: number;
-  /** 巩固区单词占比权重 */
+  /** 巩固区单词占比权�?*/
   consolidationZoneWeight?: number;
   /** 到期单词权重 */
   dueWordsWeight?: number;
-  /** 最小学习区单词数 */
+  /** 最小学习区单词�?*/
   minLearningZoneWords?: number;
-  /** 最大未知单词占比 */
+  /** 最大未知单词占�?*/
   maxUnknownWordsRatio?: number;
   /**
    * Minimum share of article lemmas present in the proficiency map before
@@ -126,15 +126,15 @@ export class RecommendationEngine {
   }
 
   /**
-   * 为候选文章打分
+   * 为候选文章打�?
    *
-   * 评分逻辑：
-   * 1. 到期单词数 × dueWordsWeight
-   * 2. 学习区单词数（L0-L2）× learningZoneWeight
-   * 3. 巩固区单词数（L3-L4）× consolidationZoneWeight
+   * 评分逻辑�?
+   * 1. 到期单词�?× dueWordsWeight
+   * 2. 学习区单词数（L0-L2）�?learningZoneWeight
+   * 3. 巩固区单词数（L3-L4）�?consolidationZoneWeight
    * 4. 主题匹配加成
    * 5. 等级匹配加成
-   * 6. 惩罚未知单词过多的文章
+   * 6. 惩罚未知单词过多的文�?
    */
   scoreArticle(
     candidate: ArticleCandidate,
@@ -165,12 +165,12 @@ export class RecommendationEngine {
       knownWordsCount++;
       totalMemoryScore += proficiency.memoryScore;
 
-      // 检查是否到期
+      // 检查是否到�?
       if (new Date(proficiency.nextReview) <= now) {
         dueWordsCount++;
       }
 
-      // 按等级分类
+      // 按等级分�?
       if (proficiency.level <= 2) {
         learningZoneCount++;
       } else {
@@ -192,7 +192,7 @@ export class RecommendationEngine {
       reason = `包含 ${dueWordsCount} 个到期单词`;
     }
 
-    // 2. 学习区单词得分
+    // 2. 学习区单词得�?
     if (learningZoneCount >= params.minLearningZoneWords) {
       score += learningZoneCount * params.learningZoneWeight;
       if (reason) reason += `，`;
@@ -201,7 +201,7 @@ export class RecommendationEngine {
       score += learningZoneCount * params.learningZoneWeight * 0.5;
     }
 
-    // 3. 巩固区单词得分
+    // 3. 巩固区单词得�?
     if (consolidationZoneCount > 0) {
       score += consolidationZoneCount * params.consolidationZoneWeight;
     }
@@ -219,7 +219,7 @@ export class RecommendationEngine {
       if (!reason) reason = `匹配 ${article.level} 等级`;
     }
 
-    // 6. 惩罚未知单词过多（仅个性化阶段）
+    // 6. 惩罚未知单词过多（仅个性化阶段�?
     if (personalized && unknownWordsRatio > params.maxUnknownWordsRatio) {
       const penalty = 1 - (unknownWordsRatio - params.maxUnknownWordsRatio);
       score *= Math.max(0.3, penalty);
@@ -233,7 +233,7 @@ export class RecommendationEngine {
     }
 
     if (!reason) {
-      reason = personalized ? '适合当前水平' : '冷启动本地推荐';
+      reason = personalized ? '�ʺϵ�ǰˮƽ' : '�����������Ƽ�';
     }
 
     return {
@@ -262,18 +262,18 @@ export class RecommendationEngine {
       this.scoreArticle(candidate, proficiencyMap, now)
     );
 
-    // 按分数降序排序
+    // 按分数降序排�?
     scores.sort((a, b) => b.score - a.score);
 
     return scores;
   }
 
   /**
-   * 推荐最佳文章
+   * 推荐最佳文�?
    *
-   * @param candidates - 候选文章列表
-   * @param proficiencyMap - 单词熟练度映射
-   * @param limit - 返回的推荐数量
+   * @param candidates - 候选文章列�?
+   * @param proficiencyMap - 单词熟练度映�?
+   * @param limit - 返回的推荐数�?
    * @returns 推荐文章及其评分
    */
   recommend(
@@ -287,10 +287,10 @@ export class RecommendationEngine {
   }
 
   /**
-   * 过滤掉不适合的文章
+   * 过滤掉不适合的文�?
    *
-   * 过滤条件：
-   * - 未知单词占比超过阈值
+   * 过滤条件�?
+   * - 未知单词占比超过阈�?
    * - 学习区单词数不足
    * - 没有任何复习价值（全是 L4 或未知）
    */
@@ -339,7 +339,7 @@ export class RecommendationEngine {
 }
 
 /**
- * 多样性推荐：避免连续推荐相似主题的文章
+ * 多样性推荐：避免连续推荐相似主题的文�?
  */
 export function diversifyRecommendations(
   recommendations: RecommendationScore[],
@@ -357,7 +357,7 @@ export function diversifyRecommendations(
     }
   }
 
-  // 降低相同主题文章的分数
+  // 降低相同主题文章的分�?
   const adjusted = recommendations.map((rec) => {
     const article = articles.get(rec.articleId);
     if (article?.topic && recentTopics.has(article.topic)) {
@@ -373,36 +373,131 @@ export function diversifyRecommendations(
 }
 
 /**
- * 间隔重复推荐：确保到期单词得到及时复习
+ * Count how many distinct review targets appear in article lemmas.
+ * Repeated occurrences of the same lemma only count once.
+ */
+export function countUniqueReviewHits(
+  lemmas: readonly string[],
+  targetWords: ReadonlySet<string> | readonly string[]
+): number {
+  const targets = targetWords instanceof Set
+    ? targetWords
+    : new Set(
+        Array.from(targetWords)
+          .map((word) => word.trim().toLowerCase())
+          .filter(Boolean)
+      );
+  if (targets.size === 0) return 0;
+
+  const present = new Set(lemmas.map((lemma) => lemma.toLowerCase()));
+  let hits = 0;
+  for (const word of targets) {
+    if (present.has(word)) hits += 1;
+  }
+  return hits;
+}
+
+/**
+ * Rank candidates by unique review-word coverage first.
+ * Optional secondaryScores break ties (e.g. engine score).
+ * Articles with zero hits are dropped.
+ */
+export function rankCandidatesByReviewHits(
+  candidates: readonly ArticleCandidate[],
+  targetWords: readonly string[] | ReadonlySet<string>,
+  secondaryScores?: ReadonlyMap<string, number>
+): ArticleCandidate[] {
+  const targets = targetWords instanceof Set
+    ? targetWords
+    : new Set(
+        Array.from(targetWords)
+          .map((word) => word.trim().toLowerCase())
+          .filter(Boolean)
+      );
+  if (targets.size === 0) return [];
+
+  return [...candidates]
+    .map((candidate) => {
+      const hits = countUniqueReviewHits(candidate.lemmas, targets);
+      return {
+        candidate,
+        hits,
+        ratio: hits / targets.size,
+        secondary: secondaryScores?.get(candidate.article.id) ?? 0,
+      };
+    })
+    .filter((row) => row.hits > 0)
+    .sort((a, b) => {
+      if (b.hits !== a.hits) return b.hits - a.hits;
+      if (b.ratio !== a.ratio) return b.ratio - a.ratio;
+      return b.secondary - a.secondary;
+    })
+    .map((row) => row.candidate);
+}
+
+/**
+ * 间隔重复推荐：确保到期单词得到及时复习�?
+ * Primary key = unique target-word hits (not repeated lemma spam).
  */
 export function scheduleReviewArticles(
   dueWords: WordProficiencyView[],
   candidates: ArticleCandidate[],
   targetReviewCount: number = 10
 ): ArticleCandidate[] {
-  // 按到期紧急程度排序
-  const sortedDueWords = dueWords.sort((a, b) => {
+  // 按到期紧急程度排�?
+  const sortedDueWords = [...dueWords].sort((a, b) => {
     const aOverdue = new Date().getTime() - new Date(a.nextReview).getTime();
     const bOverdue = new Date().getTime() - new Date(b.nextReview).getTime();
     return bOverdue - aOverdue;
   });
 
-  const priorityWords = new Set(
-    sortedDueWords.slice(0, targetReviewCount).map((w) => w.wordId)
-  );
+  const priorityWords = sortedDueWords
+    .slice(0, targetReviewCount)
+    .map((w) => w.wordId);
 
-  // 筛选包含优先单词的文章
-  const reviewArticles = candidates.filter((candidate) => {
-    const matchCount = candidate.lemmas.filter((lemma) => priorityWords.has(lemma)).length;
-    return matchCount > 0;
-  });
+  return rankCandidatesByReviewHits(candidates, priorityWords);
+}
 
-  // 按匹配的优先单词数量排序
-  reviewArticles.sort((a, b) => {
-    const aMatches = a.lemmas.filter((lemma) => priorityWords.has(lemma)).length;
-    const bMatches = b.lemmas.filter((lemma) => priorityWords.has(lemma)).length;
-    return bMatches - aMatches;
-  });
+/** Large weight so unique review hits dominate generic learning-zone scores. */
+export const REVIEW_HIT_SCORE_WEIGHT = 1000;
 
-  return reviewArticles;
+/**
+ * Build recommendation scores optimized for review hit rate.
+ * Sort key: unique hits × REVIEW_HIT_SCORE_WEIGHT + engine score.
+ */
+export function scoreArticlesForReview(
+  candidates: readonly ArticleCandidate[],
+  targetWords: readonly string[],
+  proficiencyMap: Map<string, WordProficiencyView>,
+  engine: RecommendationEngine,
+  limit: number = 5,
+  now: Date = new Date()
+): RecommendationScore[] {
+  const targets = [
+    ...new Set(
+      targetWords
+        .map((word) => word.trim().toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
+  if (targets.length === 0 || candidates.length === 0) return [];
+
+  const targetSet = new Set(targets);
+  const scored: RecommendationScore[] = [];
+
+  for (const candidate of candidates) {
+    const hits = countUniqueReviewHits(candidate.lemmas, targetSet);
+    if (hits <= 0) continue;
+
+    const base = engine.scoreArticle(candidate, proficiencyMap, now);
+    scored.push({
+      ...base,
+      score: hits * REVIEW_HIT_SCORE_WEIGHT + base.score,
+      dueWordsCount: Math.max(base.dueWordsCount, hits),
+      reason: `���� ${hits}/${targets.length} ����ϰ��${base.reason ? `��${base.reason}` : ''}`,
+    });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, Math.max(1, limit));
 }

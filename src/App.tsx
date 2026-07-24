@@ -49,6 +49,7 @@ import {
   fetchMagazineRecommendationPool,
   getCachedMagazineRecommendationPool,
 } from './lib/magazineRecommendationPool';
+import { fetchMagazineLemmaIndex } from './lib/magazineLemmaIndex';
 import {
   getArticleImportQueue,
   needsImportEnrichment,
@@ -104,19 +105,35 @@ type RecommendationContext = {
   reviewWords: string[];
 };
 
-function logRecommendationSource(source: RecommendationSource, title: string): void {
+function logRecommendationSource(
+  source: RecommendationSource,
+  title: string,
+  timing?: { catalogLoadMs?: number; rankMs?: number; hydrateMs?: number; totalMs?: number; catalogSize?: number }
+): void {
+  const timingSuffix = timing
+    ? ` [${[
+        timing.catalogSize != null ? `catalog=${timing.catalogSize}` : null,
+        timing.catalogLoadMs != null ? `index=${timing.catalogLoadMs}ms` : null,
+        timing.rankMs != null ? `rank=${timing.rankMs}ms` : null,
+        timing.hydrateMs != null ? `hydrate=${timing.hydrateMs}ms` : null,
+        timing.totalMs != null ? `total=${timing.totalMs}ms` : null,
+      ].filter(Boolean).join(' ')}]`
+    : '';
   switch (source) {
+    case 'full_catalog':
+      console.log(`📰 全库 Memory V2 推荐: ${title}${timingSuffix}`);
+      break;
     case 'local_memory':
-      console.log('📚 Memory V2.2 推荐本地文章:', title);
+      console.log(`📚 Memory V2.2 推荐本地文章: ${title}${timingSuffix}`);
       break;
     case 'library_fallback':
-      console.log('📖 本地库 fallback 文章:', title);
+      console.log(`📖 本地库 fallback 文章: ${title}${timingSuffix}`);
       break;
     case 'ai':
-      console.log('🤖 AI 生成新文章:', title);
+      console.log(`🤖 AI 生成新文章: ${title}${timingSuffix}`);
       break;
     case 'timeout_fallback':
-      console.log('⏱️ 推荐超时后的本地 fallback:', title);
+      console.log(`⏱️ 推荐超时后的本地 fallback: ${title}${timingSuffix}`);
       break;
   }
 }
@@ -179,9 +196,31 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  /** Prefetch magazine-backed candidates so Recommend for Me ranks real外刊. */
+  /**
+   * Boot prewarm for recommend:
+   * 1) full-catalog lemma index (primary ranking path)
+   * 2) small full-body pool (fallback when index unavailable)
+   */
   useEffect(() => {
     let cancelled = false;
+    void fetchMagazineLemmaIndex()
+      .then((result) => {
+        if (cancelled) return;
+        if (result.index && result.index.articleCount > 0) {
+          console.log(
+            `📰 Lemma index ready: ${result.index.articleCount} articles` +
+              ` (${result.source}, ${result.loadMs}ms)`
+          );
+        } else if (result.source === 'error') {
+          console.warn('Magazine lemma index unavailable:', result.errorMessage);
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (error instanceof Error && error.name === 'AbortError') return;
+        console.warn('Magazine lemma index failed to load:', error);
+      });
+
     void fetchMagazineRecommendationPool(48)
       .then((result) => {
         if (cancelled) return;
@@ -594,7 +633,7 @@ export default function App() {
     request: { topic: string; reviewWords: string[]; excludeArticleIds: string[] },
     signal?: AbortSignal
   ) => {
-    // Refresh pool if empty so first recommend does not rank only mock stubs.
+    // Small in-memory pool remains as fallback when full-catalog index is unavailable.
     const magazines = await ensureMagazineRecommendationPool(signal);
     const library = buildRecommendationArticlePool(
       magazines.length ? magazines : magazinePool,
@@ -603,20 +642,32 @@ export default function App() {
     );
     recommendationLibraryRef.current = library;
 
+    let lastTiming: {
+      catalogLoadMs?: number;
+      rankMs?: number;
+      hydrateMs?: number;
+      totalMs?: number;
+      catalogSize?: number;
+    } | undefined;
+
     const resolved = await resolveRecommendationArticle(
       request,
       {
         library,
         history,
         userLevel: 'B1',
+        useFullCatalog: true,
         onPhase: (phase) => {
           setRecommendPhase(phase === 'ai' ? 'ai' : 'local');
+        },
+        onTiming: (timing) => {
+          lastTiming = timing;
         },
       },
       { signal }
     );
     if (resolved) {
-      logRecommendationSource(resolved.source, resolved.article.title);
+      logRecommendationSource(resolved.source, resolved.article.title, lastTiming);
     }
     return resolved;
   };
