@@ -411,6 +411,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     tokenIndex: number,
     e: React.MouseEvent,
   ) => {
+    // Right-click is reserved for copy-and-quote; never open a word card from it.
+    if (e.button !== 0 && e.nativeEvent.button !== 0) return;
     if (suppressNextWordClickRef.current) {
       suppressNextWordClickRef.current = false;
       e.preventDefault();
@@ -562,6 +564,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const handleArticleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
     // Right-drag is the article's quote gesture, so do not open the browser menu.
     e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleArticleAuxClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 2) return;
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   /** Look up a related word from the word-card panel (word-family chips). */
@@ -997,7 +1006,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           ref={contentRef}
           onMouseDown={handleArticleMouseDown}
           onMouseUp={handleTextSelection}
+          onContextMenuCapture={handleArticleContextMenu}
           onContextMenu={handleArticleContextMenu}
+          onAuxClickCapture={handleArticleAuxClick}
           className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
         >
           {article.content.map((paragraph, pIdx) => {
