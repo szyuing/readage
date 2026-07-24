@@ -49,3 +49,32 @@ test('accepts rate_article and paragraph translation metadata', () => {
     assert.equal(translate.value.paragraphTotal, 5);
   }
 });
+
+test('accepts translate_article with ordered paragraphs', () => {
+  const result = validateTutorRequest({
+    intent: 'translate_article',
+    paragraphs: ['First English paragraph.', 'Second English paragraph.'],
+    targetLanguage: 'Chinese',
+    topic: 'Demo',
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.paragraphs?.length, 2);
+    assert.equal(result.value.paragraphTotal, 2);
+  }
+});
+
+test('accepts rewrite_article intent with level and paragraphs', () => {
+  const result = validateTutorRequest({
+    intent: 'rewrite_article',
+    level: 'B1',
+    paragraphs: ['Source paragraph one about climate.', 'Source paragraph two with more detail.'],
+    topic: 'Climate article',
+    reviewWords: ['albedo'],
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.level, 'B1');
+    assert.equal(result.value.paragraphs?.length, 2);
+  }
+});

@@ -3,6 +3,7 @@
  * Uses mocked tutor responses so CI stays offline and deterministic.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -55,6 +56,22 @@ function mockTutorFetcher(calls: Array<Record<string, unknown>>) {
   return async (_url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>;
     calls.push(body);
+
+    if (body.intent === 'translate_article') {
+      const validated = validateTutorRequest(body);
+      assert.equal(validated.ok, true, `translate_article rejected: ${JSON.stringify(body).slice(0, 200)}`);
+      const paragraphs = (body.paragraphs as string[]) || [];
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          intent: 'translate_article',
+          result: {
+            translations: paragraphs.map((p, i) => `【全译${i + 1}/${paragraphs.length}】${p.slice(0, 40)}…`),
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (body.intent === 'translate') {
       const msg = String(body.message || '');
@@ -181,8 +198,11 @@ test('enrichArticleOnImport processes full 万字 article: every paragraph trans
   const rateCalls = calls.filter((c) => c.intent === 'rate_article');
 
   assert.ok(result.wordCount >= IMPORT_LIMITS.TEN_THOUSAND_WORDS, `result.wordCount=${result.wordCount}`);
-  assert.equal(translateCalls.length, result.paragraphTranslations.length);
-  assert.ok(translateCalls.length >= 100, `translateCalls=${translateCalls.length}`);
+  const fullArticleCalls = calls.filter((c) => c.intent === 'translate_article');
+  assert.equal(result.translateMode, 'full_article');
+  assert.equal(fullArticleCalls.length, 1);
+  assert.equal(translateCalls.length, 0, 'should not fall back to per-paragraph for 万字 fixture');
+  assert.equal(result.paragraphTranslations.length, paragraphs.length);
   assert.equal(rateCalls.length, 1);
   assert.equal(result.level, 'C1');
   assert.equal(result.levelRating.difficultyScore, 72);
@@ -192,24 +212,20 @@ test('enrichArticleOnImport processes full 万字 article: every paragraph trans
     `10k words should fit in ${IMPORT_LIMITS.MAX_RATING_CHARS} char rating budget (chars=${result.charCount})`
   );
 
-  // Every translate payload must be within message limit
-  for (const call of translateCalls) {
-    assert.ok(String(call.message || '').length <= IMPORT_LIMITS.MAX_CHARS_PER_PARAGRAPH);
-    assert.equal(typeof call.paragraphIndex, 'number');
-    assert.equal(typeof call.paragraphTotal, 'number');
-  }
+  const fullParas = fullArticleCalls[0].paragraphs as string[];
+  assert.equal(fullParas.length, paragraphs.length);
+  assert.ok(countWords(fullParas.join(' ')) >= IMPORT_LIMITS.TEN_THOUSAND_WORDS * 0.98);
 
   // Rating body should cover most of the article
   const ratingCtx = String(rateCalls[0].articleContext || '');
   assert.ok(countWords(ratingCtx) >= IMPORT_LIMITS.TEN_THOUSAND_WORDS * 0.9);
 
-  // Progress must visit translating → rating → done
+  // Progress: parallel (translate+rate) → done
   const phases = progressLog.map((p) => p.phase);
-  assert.ok(phases.includes('translating'));
-  assert.ok(phases.includes('rating'));
+  assert.ok(phases.includes('parallel') || phases.includes('translating'));
   assert.ok(phases.includes('done'));
   assert.equal(progressLog.at(-1)?.phase, 'done');
-  assert.equal(progressLog.at(-1)?.total, translateCalls.length);
+  assert.equal(progressLog.at(-1)?.total, paragraphs.length);
 
   // Mock path should finish in reasonable time even for 100+ sequential calls
   assert.ok(elapsedMs < 30_000, `enrichment too slow: ${elapsedMs}ms`);
@@ -239,9 +255,10 @@ test('enrichArticleOnImport continues when some paragraph translations fail', as
     if (body.intent === 'translate') {
       n += 1;
       if (n % 3 === 0) {
+        // Non-retryable failure (not 429/timeout) so paragraph stays failed.
         return new Response(
-          JSON.stringify({ ok: false, error: { code: 'TUTOR_FAILED', message: 'timeout' } }),
-          { status: 500 }
+          JSON.stringify({ ok: false, error: { code: 'TUTOR_FAILED', message: 'hard fail' } }),
+          { status: 400 }
         );
       }
       return new Response(
@@ -265,10 +282,78 @@ test('enrichArticleOnImport continues when some paragraph translations fail', as
 
   const result = await enrichArticleOnImport(
     { title: 'partial-fail', content: paragraphs },
-    { fetcher: fetcher as typeof fetch }
+    {
+      fetcher: fetcher as typeof fetch,
+      // Force segment pool so we exercise per-paragraph failure isolation
+      // (default path is full-article for <120k chars).
+      forceParagraphPool: true,
+    }
   );
 
   assert.ok(result.paragraphTranslations.some((t) => t.includes('翻译失败')));
   assert.ok(result.paragraphTranslations.some((t) => t === '译'));
   assert.equal(result.level, 'B1');
+  assert.equal(result.translateMode, 'paragraph_pool');
+});
+
+
+test('real 530-paragraph article keeps its complete source body and rating coverage', async () => {
+  const fixtureUrl = new URL(
+    '../data/magazines/articles/new_yorker_2026-07-20/mag_new_yorker_2026.07.20_gatekeeping-13.json',
+    import.meta.url
+  );
+  const fixture = JSON.parse(readFileSync(fixtureUrl, 'utf8')) as Article;
+  assert.equal(fixture.content.length, 530, 'fixture must continue to cover the production regression');
+
+  let fullArticleCalls = 0;
+  let ratingContext = '';
+  const fetcher = async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || '{}')) as {
+      intent: string;
+      message?: string;
+      articleContext?: string;
+    };
+    if (body.intent === 'translate_article') {
+      fullArticleCalls += 1;
+      throw new Error('530 paragraphs must not be sent in one translate_article request');
+    }
+    if (body.intent === 'translate') {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          intent: 'translate',
+          result: {
+            originalText: body.message,
+            translatedText: `?:${body.message}`,
+            targetLanguage: 'Chinese',
+          },
+        }),
+        { status: 200 }
+      );
+    }
+    if (body.intent === 'rate_article') {
+      ratingContext = body.articleContext || '';
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          intent: 'rate_article',
+          result: { level: 'C1', difficultyScore: 72, summary: 'Complete long-form rating.' },
+        }),
+        { status: 200 }
+      );
+    }
+    throw new Error(`Unexpected intent: ${body.intent}`);
+  };
+
+  const result = await enrichArticleOnImport(fixture, { fetcher: fetcher as typeof fetch });
+  const applied = applyEnrichmentToArticle(fixture, result);
+  const lastParagraph = fixture.content.at(-1) || '';
+
+  assert.equal(fullArticleCalls, 0);
+  assert.equal(result.translateMode, 'paragraph_pool');
+  assert.equal(result.paragraphTranslations.length, 530);
+  assert.equal(result.paragraphTranslations.at(-1), `?:${lastParagraph}`);
+  assert.ok(ratingContext.includes(lastParagraph), 'rating input must include the final source paragraph');
+  assert.deepEqual(applied.content, fixture.content, 'the canonical source body must remain byte-for-byte intact');
+  assert.equal(applied.paragraphTranslations?.length, applied.content.length);
 });

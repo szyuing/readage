@@ -1,0 +1,246 @@
+/**
+ * 词据聚合模块
+ * 负责将原始事件聚合为文章级和每日级词据
+ */
+
+import {
+  RawWordEvent,
+  ArticleWordEvidence,
+  DailyWordEvidence,
+  FsrsGrade,
+} from './types';
+
+/**
+ * 聚合单个文章内的词据
+ * 同一文章中的重复出现只记录一条文章级词据
+ *
+ * @param events - 同一单词在同一文章同一天的所有事件
+ * @returns 文章级词据
+ */
+export function aggregateArticleEvidence(
+  events: RawWordEvent[]
+): ArticleWordEvidence | null {
+  if (events.length === 0) return null;
+
+  const exposureEvents = events.filter((e) => e.eventType === 'exposure');
+  const clickEvents = events.filter((e) => e.eventType === 'click');
+
+  // 统计有效曝光次数
+  const validExposureCount = exposureEvents.length;
+
+  // 统计被点击的 occurrence 数量（去重）
+  const clickedOccurrences = new Set(
+    clickEvents.map((e) => e.occurrenceId)
+  );
+  const clickedOccurrenceCount = clickedOccurrences.size;
+
+  const first = events[0];
+  const sortedEvents = events.sort(
+    (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
+  );
+
+  return {
+    userId: first.userId,
+    wordId: first.wordId,
+    articleId: first.articleId,
+    localDate: first.localDate,
+    validExposureCount,
+    clickedOccurrenceCount,
+    firstSeenAt: sortedEvents[0].occurredAt,
+    lastSeenAt: sortedEvents[sortedEvents.length - 1].occurredAt,
+  };
+}
+
+/**
+ * 从文章级词据判断该文章提供的评级
+ *
+ * 规则：
+ * - validExposureCount = 0 → 不提供证据
+ * - clickedOccurrenceCount > 0 → Again
+ * - validExposureCount > 0 且 clickedOccurrenceCount = 0 → Good
+ */
+export function getArticleGrade(evidence: ArticleWordEvidence): FsrsGrade | null {
+  if (evidence.validExposureCount === 0) {
+    return null; // 不提供证据
+  }
+
+  if (evidence.clickedOccurrenceCount > 0) {
+    return 'Again';
+  }
+
+  return 'Good';
+}
+
+/**
+ * 聚合每日词据
+ * 合并当天所有文章的证据，并计算最终评级
+ *
+ * @param articleEvidences - 当天该单词在所有文章中的证据
+ * @returns 每日词据
+ */
+export function aggregateDailyEvidence(
+  articleEvidences: ArticleWordEvidence[]
+): DailyWordEvidence | null {
+  if (articleEvidences.length === 0) return null;
+
+  const first = articleEvidences[0];
+  const userId = first.userId;
+  const wordId = first.wordId;
+  const localDate = first.localDate;
+
+  // 统计总曝光和点击
+  let totalExposures = 0;
+  let totalClicks = 0;
+
+  for (const evidence of articleEvidences) {
+    totalExposures += evidence.validExposureCount;
+    totalClicks += evidence.clickedOccurrenceCount;
+  }
+
+  // 计算当天的待定评级
+  const pendingGrade = calculateDailyGrade(articleEvidences);
+
+  return {
+    userId,
+    wordId,
+    localDate,
+    articleEvidence: articleEvidences,
+    articleCount: articleEvidences.length,
+    validExposureCount: totalExposures,
+    clickedOccurrenceCount: totalClicks,
+    pendingGrade,
+    finalizedAt: null, // 未结算
+  };
+}
+
+/**
+ * 计算当天的最终评级
+ *
+ * 规则：
+ * - 当天没有有效曝光 → null（不提交 FSRS）
+ * - 当天任何文章中出现至少一次点击 → Again
+ * - 当天至少一次曝光，且所有文章均未点击 → Good
+ *
+ * 优先级：Again > Good > No Grade
+ */
+export function calculateDailyGrade(
+  articleEvidences: ArticleWordEvidence[]
+): FsrsGrade | null {
+  if (articleEvidences.length === 0) return null;
+
+  // 检查是否有有效曝光
+  const hasValidExposure = articleEvidences.some((e) => e.validExposureCount > 0);
+  if (!hasValidExposure) {
+    return null;
+  }
+
+  // 检查是否有任何点击
+  const hasClick = articleEvidences.some((e) => e.clickedOccurrenceCount > 0);
+  if (hasClick) {
+    return 'Again';
+  }
+
+  // 有曝光且无点击
+  return 'Good';
+}
+
+/**
+ * 更新每日词据的待定评级
+ * 用于当天新增事件时实时更新
+ *
+ * @param dailyEvidence - 当前的每日词据
+ * @param newArticleEvidence - 新增的文章级词据
+ * @returns 更新后的每日词据
+ */
+export function updateDailyEvidence(
+  dailyEvidence: DailyWordEvidence,
+  newArticleEvidence: ArticleWordEvidence
+): DailyWordEvidence {
+  // 查找是否已存在该文章的证据
+  const existingIndex = dailyEvidence.articleEvidence.findIndex(
+    (e) => e.articleId === newArticleEvidence.articleId
+  );
+
+  let updatedArticleEvidence: ArticleWordEvidence[];
+
+  if (existingIndex >= 0) {
+    // 更新现有文章证据
+    updatedArticleEvidence = [...dailyEvidence.articleEvidence];
+    updatedArticleEvidence[existingIndex] = newArticleEvidence;
+  } else {
+    // 新增文章证据
+    updatedArticleEvidence = [...dailyEvidence.articleEvidence, newArticleEvidence];
+  }
+
+  // 重新计算汇总数据
+  const totalExposures = updatedArticleEvidence.reduce(
+    (sum, e) => sum + e.validExposureCount,
+    0
+  );
+  const totalClicks = updatedArticleEvidence.reduce(
+    (sum, e) => sum + e.clickedOccurrenceCount,
+    0
+  );
+
+  // 重新计算待定评级
+  const pendingGrade = calculateDailyGrade(updatedArticleEvidence);
+
+  return {
+    ...dailyEvidence,
+    articleEvidence: updatedArticleEvidence,
+    articleCount: updatedArticleEvidence.length,
+    validExposureCount: totalExposures,
+    clickedOccurrenceCount: totalClicks,
+    pendingGrade,
+  };
+}
+
+/**
+ * 批量聚合多个单词的每日词据
+ *
+ * @param events - 原始事件列表
+ * @returns Map<wordId, DailyWordEvidence>
+ */
+export function batchAggregateDailyEvidence(
+  events: RawWordEvent[]
+): Map<string, DailyWordEvidence> {
+  // 按 wordId + articleId 分组
+  const articleGroups = new Map<string, RawWordEvent[]>();
+
+  for (const event of events) {
+    const key = `${event.wordId}|${event.articleId}`;
+    if (!articleGroups.has(key)) {
+      articleGroups.set(key, []);
+    }
+    articleGroups.get(key)!.push(event);
+  }
+
+  // 生成文章级词据
+  const articleEvidences: ArticleWordEvidence[] = [];
+  for (const group of articleGroups.values()) {
+    const evidence = aggregateArticleEvidence(group);
+    if (evidence) {
+      articleEvidences.push(evidence);
+    }
+  }
+
+  // 按 wordId 分组
+  const wordGroups = new Map<string, ArticleWordEvidence[]>();
+  for (const evidence of articleEvidences) {
+    if (!wordGroups.has(evidence.wordId)) {
+      wordGroups.set(evidence.wordId, []);
+    }
+    wordGroups.get(evidence.wordId)!.push(evidence);
+  }
+
+  // 生成每日词据
+  const dailyEvidences = new Map<string, DailyWordEvidence>();
+  for (const [wordId, evidences] of wordGroups.entries()) {
+    const dailyEvidence = aggregateDailyEvidence(evidences);
+    if (dailyEvidence) {
+      dailyEvidences.set(wordId, dailyEvidence);
+    }
+  }
+
+  return dailyEvidences;
+}

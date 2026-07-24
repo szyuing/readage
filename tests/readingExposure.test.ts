@@ -1,6 +1,7 @@
 ﻿import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  extractLearningUnits,
   extractUniqueLemmas,
   getNewLemmas,
   hasSufficientExposureVisibility,
@@ -21,9 +22,10 @@ test('returns no lemmas for empty or punctuation-only paragraphs', () => {
 test('returns only lemmas not already present in the exposed set', () => {
   const exposed = new Set(['reading', 'well being']);
 
+  // Function words like "and" are stop-words and are not tracked by default.
   assert.deepEqual(
     getNewLemmas('Reading helps learners practice reading and reflect.', exposed),
-    ['helps', 'learners', 'practice', 'and', 'reflect']
+    ['helps', 'learners', 'practice', 'reflect']
   );
 });
 
@@ -41,9 +43,25 @@ test('deduplicates repeated words within a paragraph and across calls via the se
 
 
 test('normalizes typographic apostrophes without merging slash-separated words', () => {
+  // "i" / "no" are stop-words; content words remain.
   assert.deepEqual(
     extractUniqueLemmas('I can\u2019t choose yes/no ? either works.'),
-    ['i', "can't", 'choose', 'yes', 'no', 'either', 'works']
+    ["can't", 'choose', 'yes', 'either', 'works']
+  );
+});
+
+test('skips function words unless they appear in highlight terms', () => {
+  assert.deepEqual(
+    extractLearningUnits('A patient reader notices words and continues with confidence.').map(
+      (unit) => unit.wordId
+    ),
+    ['patient', 'reader', 'notices', 'words', 'continues', 'confidence']
+  );
+
+  assert.ok(
+    extractLearningUnits('Practice over time.', ['over time']).some(
+      (unit) => unit.wordId === 'over time'
+    )
   );
 });
 

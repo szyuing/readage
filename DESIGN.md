@@ -98,8 +98,8 @@
 
 ### 3.3 P3 · 学习报告（MyLearningScreen）
 
-- 展示：读过文章数、掌握词数、学习中词数、连续天数（天数可 mock）
-- 语法雷达：MVP 用静态示例数据（后续接 weak_points）
+- 展示：完成文章数、掌握词数、学习中词数、基于本地学习日计算的连续天数
+- 薄弱点雷达：按近期结构化批改记录中 `weak_point` 的出现次数计算；无数据时显示真实空状态
 - **Start Targeted Review** → 优先走「AI 推荐 + 嵌入到期词 → P2」，而非孤立词卡
 
 ### 3.4 P4 · 历史库（HistoryScreen）
@@ -324,7 +324,8 @@
 | 去掉孤立词卡主路径 | ✅ | 移除 TargetedReviewModal 挂载；仅语境复习 → P2 |
 | 文章库 ≠ 历史 | ✅ | `LibraryScreen` + CEFR 筛选；`HistoryScreen` 仅用户打开过的文章 |
 | 结构化批改 → production | ✅ | `POST /api/assess-output`；`applyStructuredProduction`；用对加分、用错不给分并标记 due |
-| 按文章进度（P3） | ✅ | `articleProgress` 汇总查词/讨论次数，可点回 P2 |
+| 按文章进度（P3） | ✅ | `articleProgress` 汇总完成状态、查词/讨论次数，可点回 P2 |
+| P3 真实学习统计 | ✅ | 全文段落达到可见时长后标记完成；连续天数、近 7 天事件、薄弱点频次均由持久化活动计算 |
 | 会话最小恢复 | ✅ | `ArticleSession.chatMessages`；P4 提示可恢复讨论 |
 | FSRS-6 实时熟练度 | ✅ | 当前时间投影 `R(t)`；schema v2；完整 review history 与迁移基线校验 |
 | 浏览器持久化 | ✅ | localStorage 首屏校验与旧数据升级；写入失败不再静默 |

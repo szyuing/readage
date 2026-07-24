@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   MoreHorizontal,
@@ -20,24 +21,110 @@ import {
   ReviewWord,
   StructuredAssessResult,
   ChatMessage,
+  ReadingAdvancePayload,
+  ReadingMode,
 } from '../types';
 
-import { getNewLemmas, hasSufficientExposureVisibility } from '../lib/readingExposure';
+import {
+  extractLearningUnits,
+  findLearningUnitAtTokenIndex,
+  hasSufficientExposureVisibility,
+} from '../lib/readingExposure';
 import { getPhraseHighlightMatches } from '../lib/textHighlight';
 import { postTutor } from '../lib/tutorClient';
 import type { ImportJob } from '../lib/articleImport';
 import { needsImportEnrichment } from '../lib/articleImport';
+import {
+  buildReadingAdvancePayload,
+  countArticleWords,
+  isLeftSwipeGesture,
+  minDwellMsBeforeAutoAdvance,
+} from '../lib/continuousReading';
+import { useMemoryV2Integration } from '../lib/memoryV2Integration';
+
+let recommendationNavigationHintShown = false;
+
+const REWRITE_CEFR_LEVELS = ['A2', 'B1', 'B2', 'C1'] as const;
+/** Tight gap: bar sits right above the selected word (almost touching). */
+const SELECTION_POPOVER_GAP = 2;
+/** Horizontal screen padding so the bar is not clipped on the sides. */
+const SELECTION_POPOVER_MARGIN = 8;
+/** First paint estimate before measuring the real toolbar height. */
+const SELECTION_POPOVER_EST_HEIGHT = 44;
+const SELECTION_POPOVER_EST_WIDTH = 280;
+
+type SelectionAnchor = {
+  midX: number;
+  top: number;
+  bottom: number;
+};
+
+type PopoverPos = {
+  x: number;
+  y: number;
+};
+
+/**
+ * Prefer a single-line client rect for the selected text.
+ * Multi-line ranges: use the topmost non-empty rect so the bar sits above the word line.
+ */
+function getSelectionClientRect(range: Range): DOMRect {
+  const rects = range.getClientRects();
+  let best: DOMRect | null = null;
+  for (let i = 0; i < rects.length; i += 1) {
+    const rect = rects[i];
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (!best || rect.top < best.top) best = rect;
+  }
+  return best ?? range.getBoundingClientRect();
+}
+
+function anchorFromRect(rect: DOMRect): SelectionAnchor {
+  return {
+    midX: rect.left + rect.width / 2,
+    top: rect.top,
+    bottom: rect.bottom,
+  };
+}
+
+/**
+ * Always place the action bar directly above the selected word, tight against it.
+ * Never flip below. Vertical position is not clamped into the word.
+ */
+function computePopoverPosition(
+  anchor: SelectionAnchor,
+  popoverWidth: number,
+  popoverHeight: number,
+): PopoverPos {
+  const halfW = popoverWidth / 2;
+  const x = Math.min(
+    Math.max(anchor.midX, SELECTION_POPOVER_MARGIN + halfW),
+    window.innerWidth - SELECTION_POPOVER_MARGIN - halfW,
+  );
+  // Bottom edge of bar = word top - gap  →  always above and snug.
+  const y = anchor.top - SELECTION_POPOVER_GAP - popoverHeight;
+  return { x, y };
+}
 
 interface ReadingScreenProps {
   article: Article;
   /** Live job from the independent import module (translate + rate). */
   importJob?: ImportJob | null;
   onRetryImport?: () => void;
+  /** CEFR level rewrite in progress (parent). */
+  isRewriting?: boolean;
+  /** Generate a new article version at the chosen CEFR level. */
+  onRewriteAtLevel?: (level: string) => void;
+  /** Open the parent article this rewrite was based on. */
+  onOpenParentArticle?: () => void;
   onBack: () => void;
   onAddReviewWord: (word: Partial<ReviewWord>) => void;
   onWordClick?: (word: string) => void;
   onGrammarQuery?: (wordOrPhrase: string) => void;
   onExposures?: (words: string[]) => void;
+  onReadingComplete?: () => void;
+  mode?: ReadingMode;
+  onAdvance?: (payload: ReadingAdvancePayload) => void;
   /** Structured discussion assessment -> production updates. */
   onDiscussionAssessed?: (text: string, result: StructuredAssessResult) => void;
   initialChatMessages?: ChatMessage[];
@@ -49,11 +136,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   article,
   importJob = null,
   onRetryImport,
+  isRewriting = false,
+  onRewriteAtLevel,
+  onOpenParentArticle,
   onBack,
   onAddReviewWord,
   onWordClick,
   onGrammarQuery,
   onExposures,
+  onReadingComplete,
+  mode = 'single',
+  onAdvance,
   onDiscussionAssessed,
   initialChatMessages = [],
   trackedLemmas = [],
@@ -61,7 +154,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 }) => {
   const [selectedText, setSelectedText] = useState<string>('');
   const [selectedContext, setSelectedContext] = useState<string>('');
-  const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
+  const [popoverPos, setPopoverPos] = useState<PopoverPos | null>(null);
+  const [showRewriteLevels, setShowRewriteLevels] = useState(false);
+  const selectionPopoverRef = useRef<HTMLDivElement>(null);
 
   const [isExplaining, setIsExplaining] = useState(false);
   const [grammarResult, setGrammarResult] = useState<GrammarExplanation | null>(null);
@@ -76,6 +172,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(initialChatMessages);
   const [showChatPanel, setShowChatPanel] = useState(initialChatMessages.length > 0);
+  const [articleVisible, setArticleVisible] = useState(false);
+  const [showNavigationHint, setShowNavigationHint] = useState(false);
+
+  // Memory V2.2 集成
+  const { recordParagraphExposure, recordWordClick } = useMemoryV2Integration(article.id);
 
   // Restore chat when switching articles / session
   useEffect(() => {
@@ -91,12 +192,138 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [showLevelDetail, setShowLevelDetail] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
+  /** Word span from click path — used to re-pin the bar after scroll. */
+  const selectionTargetRef = useRef<HTMLElement | null>(null);
   const exposedLemmasRef = useRef<Set<string>>(new Set());
   const onExposuresRef = useRef(onExposures);
+  const onReadingCompleteRef = useRef(onReadingComplete);
+  const onAdvanceRef = useRef(onAdvance);
+  const hasAdvancedRef = useRef(false);
+  const suppressNextWordClickRef = useRef(false);
+  const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  /** Wall-clock when the current article became active — gates auto-advance. */
+  const articleOpenedAtRef = useRef(Date.now());
+
+  const clearSelectionPopover = useCallback(() => {
+    selectionTargetRef.current = null;
+    setPopoverPos(null);
+    setSelectionAnchor(null);
+  }, []);
+
+  const openSelectionPopover = useCallback((anchor: SelectionAnchor, targetEl?: HTMLElement | null) => {
+    selectionTargetRef.current = targetEl ?? null;
+    setSelectionAnchor(anchor);
+    // Provisional position so the bar paints immediately, then layout effect snaps to measured size.
+    setPopoverPos(
+      computePopoverPosition(
+        anchor,
+        SELECTION_POPOVER_EST_WIDTH,
+        SELECTION_POPOVER_EST_HEIGHT,
+      ),
+    );
+  }, []);
+
+  // Measure real toolbar size, then glue it tight above the selected word.
+  useLayoutEffect(() => {
+    if (!selectionAnchor || !selectedText || !selectionPopoverRef.current) return;
+    const { offsetWidth, offsetHeight } = selectionPopoverRef.current;
+    if (offsetWidth <= 0 || offsetHeight <= 0) return;
+    const next = computePopoverPosition(selectionAnchor, offsetWidth, offsetHeight);
+    setPopoverPos((prev) => {
+      if (prev && Math.abs(prev.x - next.x) < 0.5 && Math.abs(prev.y - next.y) < 0.5) {
+        return prev;
+      }
+      return next;
+    });
+  }, [selectionAnchor, selectedText]);
+
+  // While open, keep the bar locked tight above the word (scroll / resize).
+  useEffect(() => {
+    if (!selectionAnchor || !selectedText) return;
+
+    const applyAnchor = (rect: DOMRect) => {
+      const next = anchorFromRect(rect);
+      setSelectionAnchor((prev) => {
+        if (
+          prev
+          && Math.abs(prev.midX - next.midX) < 0.5
+          && Math.abs(prev.top - next.top) < 0.5
+          && Math.abs(prev.bottom - next.bottom) < 0.5
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    };
+
+    const refreshAnchorFromDom = () => {
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        if (!contentRef.current || contentRef.current.contains(range.commonAncestorContainer)) {
+          const rect = getSelectionClientRect(range);
+          if (rect.width > 0 || rect.height > 0) {
+            applyAnchor(rect);
+            return;
+          }
+        }
+      }
+
+      const target = selectionTargetRef.current;
+      if (target && document.contains(target)) {
+        const rect = target.getBoundingClientRect();
+        if (rect.width > 0 || rect.height > 0) {
+          applyAnchor(rect);
+          return;
+        }
+      }
+
+      clearSelectionPopover();
+    };
+
+    window.addEventListener('scroll', refreshAnchorFromDom, true);
+    window.addEventListener('resize', refreshAnchorFromDom);
+    return () => {
+      window.removeEventListener('scroll', refreshAnchorFromDom, true);
+      window.removeEventListener('resize', refreshAnchorFromDom);
+    };
+  }, [selectionAnchor, selectedText, clearSelectionPopover]);
 
   useEffect(() => {
     onExposuresRef.current = onExposures;
   }, [onExposures]);
+
+  useEffect(() => {
+    onReadingCompleteRef.current = onReadingComplete;
+  }, [onReadingComplete]);
+
+  useEffect(() => {
+    onAdvanceRef.current = onAdvance;
+  }, [onAdvance]);
+
+  useEffect(() => {
+    hasAdvancedRef.current = false;
+    exposedLemmasRef.current = new Set();
+    articleOpenedAtRef.current = Date.now();
+    setArticleVisible(false);
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      setArticleVisible(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [article.id]);
+
+  useEffect(() => {
+    if (mode !== 'recommendation-feed' || recommendationNavigationHintShown) return;
+    recommendationNavigationHintShown = true;
+    setShowNavigationHint(true);
+  }, [mode]);
+
+  useEffect(() => {
+    if (!showNavigationHint) return;
+    const timer = window.setTimeout(() => setShowNavigationHint(false), 2600);
+    return () => window.clearTimeout(timer);
+  }, [showNavigationHint]);
 
   // A paragraph counts as read only after it stays at least 60% visible for 800ms.
   useEffect(() => {
@@ -104,6 +331,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (!container || typeof IntersectionObserver === 'undefined') return;
 
     let isActive = true;
+    let autoAdvanceTimer: number | null = null;
     const visibleParagraphs = new Set<Element>();
     const completedParagraphs = new Set<Element>();
     const exposureTimers = new Map<Element, number>();
@@ -114,6 +342,43 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       if (timerId === undefined) return;
       window.clearTimeout(timerId);
       exposureTimers.delete(paragraph);
+    };
+
+    const clearAutoAdvanceTimer = () => {
+      if (autoAdvanceTimer === null) return;
+      window.clearTimeout(autoAdvanceTimer);
+      autoAdvanceTimer = null;
+    };
+
+    const finishReading = () => {
+      if (!isActive || hasAdvancedRef.current) return;
+      hasAdvancedRef.current = true;
+      clearAutoAdvanceTimer();
+      if (mode === 'recommendation-feed') {
+        onAdvanceRef.current?.(
+          buildReadingAdvancePayload(article.id, 'completed', exposedLemmasRef.current)
+        );
+      } else {
+        onReadingCompleteRef.current?.();
+      }
+    };
+
+    const scheduleFinishReading = () => {
+      if (!isActive || hasAdvancedRef.current || autoAdvanceTimer !== null) return;
+      if (mode !== 'recommendation-feed') {
+        finishReading();
+        return;
+      }
+      // Prevent short on-screen articles from auto-skipping after ~800ms.
+      const wordCount = countArticleWords(article.content);
+      const minDwell = minDwellMsBeforeAutoAdvance(wordCount);
+      const elapsed = Date.now() - articleOpenedAtRef.current;
+      const remaining = Math.max(0, minDwell - elapsed);
+      if (remaining > 0) {
+        autoAdvanceTimer = window.setTimeout(finishReading, remaining);
+      } else {
+        finishReading();
+      }
     };
 
     const observer = new IntersectionObserver(
@@ -150,18 +415,32 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
             const paragraphIndex = Number(paragraph.dataset.readingParagraph);
             const paragraphText = article.content[paragraphIndex] ?? paragraph.textContent ?? '';
-            const newLemmas = getNewLemmas(
-              paragraphText,
-              exposedLemmasRef.current,
-            );
+            const learningUnits = extractLearningUnits(paragraphText, highlightTerms);
+            const newWordIds = [...new Set(
+              learningUnits.map((unit) => unit.wordId),
+            )].filter((wordId) => !exposedLemmasRef.current.has(wordId));
 
-            newLemmas.forEach((lemma) => exposedLemmasRef.current.add(lemma));
+            newWordIds.forEach((wordId) => exposedLemmasRef.current.add(wordId));
             completedParagraphs.add(paragraph);
             observer.unobserve(paragraph);
             visibleParagraphs.delete(paragraph);
 
-            if (newLemmas.length > 0) {
-              onExposuresRef.current?.(newLemmas);
+            // Memory V2.2: 记录段落曝光
+            if (learningUnits.length > 0) {
+              recordParagraphExposure(paragraphIndex, learningUnits).catch(err =>
+                console.error('Memory V2.2 exposure recording failed:', err)
+              );
+            }
+
+            if (newWordIds.length > 0 && mode === 'single') {
+              onExposuresRef.current?.(newWordIds);
+            }
+            if (
+              paragraphs.length > 0
+              && completedParagraphs.size === paragraphs.length
+              && !hasAdvancedRef.current
+            ) {
+              scheduleFinishReading();
             }
           }, 800);
 
@@ -199,31 +478,57 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       observer.disconnect();
       pauseExposureTracking();
+      clearAutoAdvanceTimer();
       completedParagraphs.clear();
     };
     // The exposure set intentionally resets only when the article lifecycle changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article.id]);
+  }, [article.id, mode]);
 
   const highlightTerms = [
     ...(article.keyWords || []),
     ...(article.embeddedReviewWords || []),
   ];
 
-  const handleWordClick = (word: string, paragraph: string, e: React.MouseEvent) => {
+  const handleWordClick = (
+    word: string,
+    paragraph: string,
+    tokenIndex: number,
+    e: React.MouseEvent,
+  ) => {
+    if (suppressNextWordClickRef.current) {
+      suppressNextWordClickRef.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     const cleanWord = word.replace(/[^a-zA-Z\s']/g, '').trim();
     if (!cleanWord) return;
 
     onWordClick?.(cleanWord);
 
-    const rect = e.currentTarget.getBoundingClientRect();
+    // Memory V2.2: 记录单词点击
+    // 查找段落索引和单词在段落中的位置
+    const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph]');
+    const learningUnit = findLearningUnitAtTokenIndex(
+      paragraph,
+      highlightTerms,
+      tokenIndex,
+    );
+    if (paragraphElement && learningUnit) {
+      const paragraphIndex = Number(paragraphElement.getAttribute('data-reading-paragraph'));
+
+      recordWordClick(learningUnit, paragraphIndex).catch(err =>
+        console.error('Memory V2.2 click recording failed:', err)
+      );
+    }
+
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
     setSelectedText(cleanWord);
     setSelectedContext(paragraph);
-    setPopoverPos({
-      x: Math.min(rect.left + rect.width / 2, window.innerWidth - 160),
-      y: rect.top - 55,
-    });
+    openSelectionPopover(anchorFromRect(rect), target);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -275,13 +580,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (text.length < 2 || text.length > 4000) return;
 
     const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
+    // First client rect = the line/word the selection starts on (true "above the word").
+    const rect = getSelectionClientRect(range);
+    if (rect.width <= 0 && rect.height <= 0) return;
+
     setSelectedText(text);
     setSelectedContext(text);
-    setPopoverPos({
-      x: Math.min(Math.max(rect.left + rect.width / 2, 80), window.innerWidth - 160),
-      y: Math.max(rect.top - 55, 8),
-    });
+    // Drag selection: follow the live Range, not a word node.
+    openSelectionPopover(anchorFromRect(rect), null);
 
     void copyTextToClipboard(text).then((ok) => {
       if (ok) flashCopyHint('已复制到剪贴板');
@@ -290,7 +596,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const handleExplainGrammar = async () => {
     if (!selectedText) return;
-    setPopoverPos(null);
+    clearSelectionPopover();
     setIsExplaining(true);
     setGrammarResult(null);
     onGrammarQuery?.(selectedText);
@@ -324,7 +630,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const handleTranslate = async () => {
     if (!selectedText) return;
-    setPopoverPos(null);
+    clearSelectionPopover();
     setIsTranslating(true);
     setTranslationResult(null);
 
@@ -447,8 +753,71 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     return 'text-lg leading-relaxed';
   };
 
+  const shouldIgnoreSwipeTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) return false;
+    return Boolean(target.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"]'));
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      mode !== 'recommendation-feed'
+      || !event.isPrimary
+      || !['touch', 'pen'].includes(event.pointerType)
+      || shouldIgnoreSwipeTarget(event.target)
+    ) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    swipeStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (
+      mode !== 'recommendation-feed'
+      || !start
+      || start.pointerId !== event.pointerId
+      || hasAdvancedRef.current
+    ) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    if (!isLeftSwipeGesture({
+      startX: start.x,
+      startY: start.y,
+      endX: event.clientX,
+      endY: event.clientY,
+    })) return;
+
+    hasAdvancedRef.current = true;
+    suppressNextWordClickRef.current = true;
+    window.setTimeout(() => {
+      suppressNextWordClickRef.current = false;
+    }, 0);
+    onAdvanceRef.current?.(
+      buildReadingAdvancePayload(article.id, 'skipped', exposedLemmasRef.current)
+    );
+  };
+
+  const handlePointerCancel = () => {
+    swipeStartRef.current = null;
+  };
+
   return (
-    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A]">
+    <div
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y' : undefined }}
+      className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out ${
+        articleVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2'
+      }`}
+    >
+      {showNavigationHint && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-full bg-[#2C2723]/90 px-4 py-2 text-xs font-medium text-white shadow-lg pointer-events-none">
+          下滑阅读 · 左滑下一篇
+        </div>
+      )}
+
       <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 backdrop-blur-md border-b border-[#E7E2D5] px-4 py-3 flex items-center justify-between">
         <button
           onClick={onBack}
@@ -462,14 +831,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           <h1 className="font-serif text-lg sm:text-xl font-normal text-[#2C2723] truncate max-w-xs sm:max-w-md">
             {article.title}
           </h1>
-          {(article.level || article.levelRating || article.source) && (
+          {(article.levelRating || article.level || article.source) && (
             <p className="text-[10px] text-[#8C8478] mt-0.5">
+              {/* One CEFR badge per article (levelRating is the official grade when present). */}
               {(article.levelRating?.level || article.level) && (
                 <button
                   type="button"
                   onClick={() => setShowLevelDetail((v) => !v)}
                   className="hover:text-[#C35E37] underline-offset-2 hover:underline"
-                  title="查看评级说明"
+                  title="查看本篇唯一 CEFR 评级"
                 >
                   CEFR {article.levelRating?.level || article.level}
                   {typeof article.levelRating?.difficultyScore === 'number' && (
@@ -538,12 +908,81 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   <span>{showParagraphTranslations ? '隐藏段落实译' : '显示段落实译'}</span>
                 </button>
               )}
+
+              {onRewriteAtLevel && (
+                <div className="mt-1 border-t border-[#E7E2D5] pt-1">
+                  <button
+                    type="button"
+                    disabled={isRewriting}
+                    onClick={() => setShowRewriteLevels((v) => !v)}
+                    className="w-full text-left px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <Sparkles className="w-4 h-4 text-[#C35E37]" />
+                    <span>{isRewriting ? '正在改写…' : '按等级改写…'}</span>
+                  </button>
+                  {showRewriteLevels && !isRewriting && (
+                    <div className="px-2 pb-2 grid grid-cols-4 gap-1">
+                      {REWRITE_CEFR_LEVELS.map((lv) => {
+                        const current = (article.levelRating?.level || article.level || '').toUpperCase();
+                        const isCurrent = current === lv;
+                        return (
+                          <button
+                            key={lv}
+                            type="button"
+                            onClick={() => {
+                              setShowRewriteLevels(false);
+                              setShowMenu(false);
+                              onRewriteAtLevel(lv);
+                            }}
+                            className={`py-1.5 rounded-lg text-center font-semibold border transition-colors ${
+                              isCurrent
+                                ? 'border-[#C35E37] bg-[#C35E37]/10 text-[#C35E37]'
+                                : 'border-[#E0DBCF] bg-white hover:border-[#C35E37] text-[#3D372E]'
+                            }`}
+                            title={isCurrent ? `当前约 ${lv}，仍可生成新版本` : `生成 CEFR ${lv} 新版本`}
+                          >
+                            {lv}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="px-3 pb-1 text-[10px] text-[#9C9388] leading-snug">
+                    保留原文；新版本以所选 CEFR 为唯一评级，并后台翻译。
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
       </header>
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-6 py-8 sm:py-12 pb-36">
+        {(article.parentArticleId || article.source === 'level_rewrite') && (
+          <div className="mb-4 p-3 bg-[#FDF2F8] border border-[#FBCFE8] rounded-xl text-xs text-[#9D174D] flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold">
+                改写版
+                {(article.levelRating?.level || article.level || article.rewriteTargetLevel)
+                  ? ` · CEFR ${article.levelRating?.level || article.level || article.rewriteTargetLevel}`
+                  : ''}
+              </p>
+              <p className="mt-0.5 text-[#BE185D]">
+                改写自「{article.parentArticleTitle || '原文'}」· 每篇仅一个评级
+              </p>
+            </div>
+            {onOpenParentArticle && (
+              <button
+                type="button"
+                onClick={onOpenParentArticle}
+                className="shrink-0 px-2.5 py-1 rounded-lg bg-white border border-[#F9A8D4] text-[#9D174D] font-medium hover:bg-[#FDF2F8]"
+              >
+                打开原文
+              </button>
+            )}
+          </div>
+        )}
+
         {article.embeddedReviewWords && article.embeddedReviewWords.length > 0 && (
           <div className="mb-4 p-3 bg-[#FEF3C7] border border-[#FDE68A] rounded-xl text-xs text-[#92400E]">
             <span className="font-semibold">语境复习词：</span>
@@ -646,7 +1085,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     return (
                       <React.Fragment key={wIdx}>
                         <span
-                          onClick={(e) => handleWordClick(matchedTerm || word, paragraph, e)}
+                          onClick={(e) => handleWordClick(matchedTerm || word, paragraph, wIdx, e)}
                           className={
                             matchedTerm
                               ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
@@ -678,53 +1117,65 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      {popoverPos && selectedText && (
-        <div
-          style={{
-            position: 'fixed',
-            left: `${popoverPos.x}px`,
-            top: `${popoverPos.y}px`,
-            transform: 'translateX(-50%)',
-          }}
-          className="z-50 bg-white/95 backdrop-blur-md border border-[#E0DBCF] shadow-lg rounded-xl p-1.5 flex items-center gap-1 text-xs font-sans"
-        >
-          <button
-            onClick={handleExplainGrammar}
-            className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-[#C35E37]" />
-            <span>Explain</span>
-          </button>
-          <div className="w-[1px] h-4 bg-[#E5DFD3]" />
-          <button
-            onClick={handleTranslate}
-            className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-          >
-            <Globe className="w-3.5 h-3.5 text-[#2563EB]" />
-            <span>Translate</span>
-          </button>
-          <div className="w-[1px] h-4 bg-[#E5DFD3]" />
-          <button
-            type="button"
-            onClick={() => {
-              void copyTextToClipboard(selectedText).then((ok) => {
-                flashCopyHint(ok ? '已复制到剪贴板' : '复制失败');
-              });
+      {/* Portal to body: root uses translate-x which breaks position:fixed coords when scrolled. */}
+      {popoverPos
+        && selectedText
+        && createPortal(
+          <div
+            ref={selectionPopoverRef}
+            role="toolbar"
+            aria-label="Selection actions"
+            style={{
+              position: 'fixed',
+              left: popoverPos.x,
+              top: popoverPos.y,
+              transform: 'translateX(-50%)',
+              zIndex: 60,
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-            title="Copy selection"
+            className="bg-white/95 backdrop-blur-md border border-[#E0DBCF] shadow-lg rounded-xl p-1.5 flex items-center gap-1 text-xs font-sans whitespace-nowrap"
           >
-            <Copy className="w-3.5 h-3.5 text-[#5B544C]" />
-            <span>Copy</span>
-          </button>
-          <button
-            onClick={() => setPopoverPos(null)}
-            className="p-1 hover:bg-[#F5F2EA] rounded-md text-[#888]"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={handleExplainGrammar}
+              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-[#C35E37]" />
+              <span>Explain</span>
+            </button>
+            <div className="w-[1px] h-4 bg-[#E5DFD3]" />
+            <button
+              type="button"
+              onClick={handleTranslate}
+              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
+            >
+              <Globe className="w-3.5 h-3.5 text-[#2563EB]" />
+              <span>Translate</span>
+            </button>
+            <div className="w-[1px] h-4 bg-[#E5DFD3]" />
+            <button
+              type="button"
+              onClick={() => {
+                void copyTextToClipboard(selectedText).then((ok) => {
+                  flashCopyHint(ok ? '已复制到剪贴板' : '复制失败');
+                });
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
+              title="Copy selection"
+            >
+              <Copy className="w-3.5 h-3.5 text-[#5B544C]" />
+              <span>Copy</span>
+            </button>
+            <button
+              type="button"
+              onClick={clearSelectionPopover}
+              className="p-1 hover:bg-[#F5F2EA] rounded-md text-[#888]"
+              aria-label="Close"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>,
+          document.body,
+        )}
 
       {(isExplaining || grammarResult) && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">

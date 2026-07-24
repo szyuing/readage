@@ -15,6 +15,7 @@ export {
   countChars,
   countWords,
   enrichArticleOnImport,
+  mapPool,
   needsImportEnrichment,
   prepareImportParagraphs,
   splitArticleParagraphs,
@@ -22,9 +23,12 @@ export {
   type EnrichPhase,
   type EnrichProgress,
   type EnrichResult,
+  type TranslateMode,
 } from './enrichment';
 
 export {
+  ARTICLE_IMPORT_CONCURRENCY,
+  ARTICLE_IMPORT_JOB_TIMEOUT_MS,
   ArticleImportQueue,
   getArticleImportQueue,
   __setArticleImportQueueForTests,

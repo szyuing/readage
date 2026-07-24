@@ -1,6 +1,6 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateRecommendedArticle } from '../src/lib/articleValidation';
+import { validateRecommendedArticle, validateRewrittenArticle } from '../src/lib/articleValidation';
 
 test('accepts an article with all review words and controlled new-word density', () => {
   const paragraphs = [
@@ -82,5 +82,34 @@ test('repairs inflected keyword metadata and drops keywords absent from the arti
 
   assert.equal(result.isValid, true, result.errors.join('; '));
   assert.deepEqual(result.article?.keyWords, ['reinforces', 'recognize']);
+});
+
+test('validateRewrittenArticle accepts a structured CEFR rewrite', () => {
+  const paragraphs = [
+    `${Array.from({ length: 50 }, () => 'practice').join(' ')} climate energy`,
+    `${Array.from({ length: 50 }, () => 'reading').join(' ')} scientists observe`,
+  ];
+  const result = validateRewrittenArticle(
+    {
+      title: 'Earth Energy',
+      description: 'A simpler take on climate imbalance.',
+      paragraphs,
+      keyWords: ['climate', 'energy'],
+    },
+    ['climate']
+  );
+  assert.equal(result.isValid, true, result.errors.join('; '));
+  assert.ok((result.metrics.wordCount || 0) >= 80);
+});
+
+test('validateRewrittenArticle rejects too-short rewrites', () => {
+  const result = validateRewrittenArticle({
+    title: 'Tiny',
+    description: 'Too short',
+    paragraphs: ['Hello world.', 'Bye.'],
+    keyWords: ['hello'],
+  });
+  assert.equal(result.isValid, false);
+  assert.ok(result.errors.some((e) => e.toLowerCase().includes('short')));
 });
 

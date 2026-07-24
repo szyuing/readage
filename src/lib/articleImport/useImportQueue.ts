@@ -7,9 +7,11 @@ import {
 const EMPTY_SNAPSHOT: ImportQueueSnapshot = {
   jobs: [],
   pendingCount: 0,
+  activeJobs: [],
   active: null,
   isProcessing: false,
   bannerMessage: null,
+  concurrency: 2,
 };
 
 /** Subscribe to the shared import-module queue for UI banners / progress. */

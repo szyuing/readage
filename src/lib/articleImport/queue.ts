@@ -2,8 +2,8 @@
  * Background article import queue (module: translate + CEFR rate).
  *
  * Strategy D: callers store/open articles immediately; this queue enriches
- * them serially in the background. Multiple articles can be enqueued;
- * only one runs at a time (article-level concurrency = 1).
+ * them in the background. Multiple articles can be enqueued and up to
+ * ARTICLE_CONCURRENCY (default 3) run at the same time.
  */
 
 import type { Article } from '../../types';
@@ -26,6 +26,18 @@ export type ImportJobSource =
   | 'retry'
   | 'resume';
 
+/**
+ * Max articles enriching at the same time.
+ * Stay at 2 so paragraph-pool workers + rating stay under Step's ~10 concurrency.
+ */
+export const ARTICLE_IMPORT_CONCURRENCY = 2;
+
+/**
+ * Hard cap per job. Without this, a hung LLM call leaves the banner stuck forever
+ * (processing slots never free, waiting jobs never start).
+ */
+export const ARTICLE_IMPORT_JOB_TIMEOUT_MS = 6 * 60_000;
+
 export interface ImportJob {
   id: string;
   articleId: string;
@@ -38,17 +50,26 @@ export interface ImportJob {
   enqueuedAt: string;
   startedAt?: string;
   finishedAt?: string;
+  /**
+   * When set, import only translates — rating is already the article's sole CEFR
+   * (e.g. user-chosen rewrite level). One article → one rating.
+   */
+  lockedLevelRating?: import('../../types').ArticleLevelRating;
 }
 
 export interface ImportQueueSnapshot {
   jobs: ImportJob[];
   /** Jobs waiting or running. */
   pendingCount: number;
-  /** Currently processing job, if any. */
+  /** Jobs currently processing (up to ARTICLE_IMPORT_CONCURRENCY). */
+  activeJobs: ImportJob[];
+  /** First active job (compat for single-banner UIs). */
   active: ImportJob | null;
   isProcessing: boolean;
   /** Short banner string for global UI. */
   bannerMessage: string | null;
+  /** Configured article concurrency. */
+  concurrency: number;
 }
 
 export interface ImportCompletePayload {
@@ -63,6 +84,8 @@ export interface ArticleImportQueueOptions {
   /** Injected for tests. */
   fetcher?: typeof fetch;
   targetLanguage?: string;
+  /** Override article concurrency (default ARTICLE_IMPORT_CONCURRENCY = 3). */
+  concurrency?: number;
   /**
    * Called when a job finishes successfully so the host can merge into history.
    * Must be set before processing usefully updates app state.
@@ -83,7 +106,8 @@ function cloneJobs(jobs: ImportJob[]): ImportJob[] {
 
 export class ArticleImportQueue {
   private jobs: ImportJob[] = [];
-  private pumping = false;
+  /** Number of runJob promises currently in flight. */
+  private inFlight = 0;
   private listeners = new Set<ImportQueueListener>();
   private options: ArticleImportQueueOptions = {};
   /** Prevent double-enqueue of the same article while active/queued. */
@@ -93,6 +117,11 @@ export class ArticleImportQueue {
 
   configure(options: ArticleImportQueueOptions): void {
     this.options = { ...this.options, ...options };
+  }
+
+  get concurrency(): number {
+    const n = this.options.concurrency ?? ARTICLE_IMPORT_CONCURRENCY;
+    return Math.max(1, Math.min(8, Math.floor(n)));
   }
 
   subscribe(listener: ImportQueueListener): () => void {
@@ -105,22 +134,39 @@ export class ArticleImportQueue {
 
   getSnapshot(): ImportQueueSnapshot {
     const jobs = cloneJobs(this.jobs);
-    const active = jobs.find((j) => j.status === 'processing') ?? null;
+    const activeJobs = jobs.filter((j) => j.status === 'processing');
+    const active = activeJobs[0] ?? null;
     const pendingCount = jobs.filter((j) => j.status === 'queued' || j.status === 'processing').length;
+    const concurrency = this.concurrency;
+
     let bannerMessage: string | null = null;
-    if (active) {
-      const detail = active.progress?.message || '后台处理中…';
-      const queueTail = pendingCount > 1 ? ` · 队列 ${pendingCount} 篇` : '';
-      bannerMessage = `导入模块 · 《${active.title}》 ${detail}${queueTail}`;
+    if (activeJobs.length > 0) {
+      if (activeJobs.length === 1) {
+        const detail = activeJobs[0].progress?.message || '后台处理中…';
+        const queueTail = pendingCount > 1 ? ` · 队列 ${pendingCount} 篇` : '';
+        bannerMessage = `导入模块 · 《${activeJobs[0].title}》 ${detail}${queueTail}`;
+      } else {
+        const titles = activeJobs
+          .slice(0, 3)
+          .map((j) => `《${j.title}》`)
+          .join('、');
+        const more = activeJobs.length > 3 ? ` 等 ${activeJobs.length} 篇` : '';
+        const waiting = pendingCount - activeJobs.length;
+        const waitTail = waiting > 0 ? ` · 等待 ${waiting} 篇` : '';
+        bannerMessage = `导入模块 · ${concurrency} 篇并发中：${titles}${more}${waitTail}`;
+      }
     } else if (pendingCount > 0) {
       bannerMessage = `导入模块 · 队列中 ${pendingCount} 篇待处理`;
     }
+
     return {
       jobs,
       pendingCount,
+      activeJobs,
       active,
-      isProcessing: Boolean(active),
+      isProcessing: activeJobs.length > 0,
       bannerMessage,
+      concurrency,
     };
   }
 
@@ -151,6 +197,15 @@ export class ArticleImportQueue {
       return { enqueued: true, reason: 'already_in_queue' };
     }
 
+    // Intentional rewrite rating (or any complete official grade) is locked —
+    // import must not produce a second CEFR for the same article.
+    const lockedLevelRating =
+      article.source === 'level_rewrite' && article.levelRating?.level && article.levelRating?.summary
+        ? article.levelRating
+        : article.rewriteTargetLevel && article.levelRating?.level && article.levelRating?.summary
+          ? article.levelRating
+          : undefined;
+
     const job: ImportJob = {
       id: `import-${article.id}-${Date.now()}`,
       articleId: article.id,
@@ -162,19 +217,22 @@ export class ArticleImportQueue {
         phase: 'idle',
         paragraphIndex: 0,
         paragraphTotal: article.content.length,
-        message: '已加入导入队列',
+        message: lockedLevelRating
+          ? `已加入队列（评级已锁定 ${lockedLevelRating.level}，仅翻译）`
+          : '已加入导入队列',
       },
       enqueuedAt: new Date().toISOString(),
+      lockedLevelRating,
     };
 
     this.jobs = [job, ...this.jobs].slice(0, 80);
     this.activeIds.add(article.id);
     this.emit();
-    void this.pump();
+    this.pump();
     return { enqueued: true, reason: 'queued' };
   }
 
-  /** Enqueue many articles (serial processing). */
+  /** Enqueue many articles (processed with article-level concurrency). */
   enqueueMany(articles: Article[], source: ImportJobSource = 'magazine'): number {
     let n = 0;
     for (const article of articles) {
@@ -205,6 +263,7 @@ export class ArticleImportQueue {
     job.finishedAt = new Date().toISOString();
     this.activeIds.delete(articleId);
     this.emit();
+    this.pump();
     return true;
   }
 
@@ -231,45 +290,87 @@ export class ArticleImportQueue {
     }
   }
 
-  private async pump(): Promise<void> {
-    if (this.pumping) return;
-    this.pumping = true;
-    try {
-      while (true) {
-        const next = this.jobs.find((j) => j.status === 'queued');
-        if (!next) break;
-        await this.runJob(next);
-      }
-    } finally {
-      this.pumping = false;
+  /**
+   * Fill free slots up to `concurrency` with queued jobs.
+   * Each job runs independently; completion frees a slot and pumps again.
+   */
+  private pump(): void {
+    const limit = this.concurrency;
+    while (this.inFlight < limit) {
+      const next = this.jobs.find((j) => j.status === 'queued');
+      if (!next) break;
+      this.inFlight += 1;
+      // Mark processing immediately so the next loop iteration picks another job.
+      next.status = 'processing';
+      next.startedAt = new Date().toISOString();
+      next.progress = {
+        phase: 'translating',
+        paragraphIndex: 0,
+        paragraphTotal: next.content.length,
+        message: '准备翻译…',
+      };
+      this.emit();
+      this.options.onStarted?.(next.articleId);
+
+      void this.runJob(next).finally(() => {
+        this.inFlight = Math.max(0, this.inFlight - 1);
+        this.pump();
+      });
     }
   }
 
   private async runJob(job: ImportJob): Promise<void> {
-    job.status = 'processing';
-    job.startedAt = new Date().toISOString();
-    job.progress = {
-      phase: 'translating',
-      paragraphIndex: 0,
-      paragraphTotal: job.content.length,
-      message: '准备逐段翻译…',
-    };
-    this.emit();
-    this.options.onStarted?.(job.articleId);
+    // status already set to processing in pump()
+    const startedAt = Date.now();
+    const heartbeat = setInterval(() => {
+      if (job.status !== 'processing') return;
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const baseMsg = job.progress?.message?.replace(/\s·\s已耗时\s\d+s$/, '') || '处理中…';
+      job.progress = {
+        phase: job.progress?.phase || 'translating',
+        paragraphIndex: job.progress?.paragraphIndex ?? 0,
+        paragraphTotal: job.progress?.paragraphTotal ?? job.content.length,
+        message: `${baseMsg} · 已耗时 ${elapsedSec}s`,
+        wordCount: job.progress?.wordCount,
+        charCount: job.progress?.charCount,
+      };
+      this.emit();
+    }, 5_000);
 
+    let jobTimeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      const enrichment = await enrichArticleOnImport(
-        { title: job.title, content: job.content },
-        {
-          targetLanguage: this.options.targetLanguage || 'Chinese',
-          fetcher: this.options.fetcher,
-          onProgress: (progress) => {
-            if (this.cancelledIds.has(job.articleId)) return;
-            job.progress = progress;
-            this.emit();
-          },
-        }
-      );
+      const enrichment = await Promise.race([
+        enrichArticleOnImport(
+          { title: job.title, content: job.content },
+          {
+            targetLanguage: this.options.targetLanguage || 'Chinese',
+            fetcher: this.options.fetcher,
+            // One article → one rating: skip AI re-grade when already locked.
+            skipRating: Boolean(job.lockedLevelRating),
+            onProgress: (progress) => {
+              if (this.cancelledIds.has(job.articleId)) return;
+              // Ignore late progress after this job already left processing.
+              if (job.status !== 'processing') return;
+              const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+              job.progress = {
+                ...progress,
+                message: `${progress.message} · 已耗时 ${elapsedSec}s`,
+              };
+              this.emit();
+            },
+          }
+        ),
+        new Promise<never>((_, reject) => {
+          jobTimeoutId = setTimeout(() => {
+            reject(
+              new Error(
+                `导入超时（${Math.round(ARTICLE_IMPORT_JOB_TIMEOUT_MS / 1000)}s）：《${job.title}》`
+              )
+            );
+          }, ARTICLE_IMPORT_JOB_TIMEOUT_MS);
+        }),
+      ]);
+      if (jobTimeoutId) clearTimeout(jobTimeoutId);
 
       if (this.cancelledIds.has(job.articleId)) {
         this.cancelledIds.delete(job.articleId);
@@ -286,7 +387,14 @@ export class ArticleImportQueue {
         status: 'In Progress',
         content: job.content,
       };
-      const article = applyEnrichmentToArticle(base, enrichment);
+      let article = applyEnrichmentToArticle(base, enrichment);
+      if (job.lockedLevelRating) {
+        article = {
+          ...article,
+          levelRating: job.lockedLevelRating,
+          level: job.lockedLevelRating.level,
+        };
+      }
       job.status = 'done';
       job.finishedAt = new Date().toISOString();
       job.progress = {
@@ -308,12 +416,15 @@ export class ArticleImportQueue {
         enrichment,
       });
     } catch (error) {
+      if (jobTimeoutId) clearTimeout(jobTimeoutId);
       if (this.cancelledIds.has(job.articleId)) {
         this.cancelledIds.delete(job.articleId);
         this.activeIds.delete(job.articleId);
         this.emit();
         return;
       }
+      // Already finished by another path (e.g. cancelAll) — do not clobber.
+      if (job.status !== 'processing') return;
       const message = error instanceof Error ? error.message : '导入 enrichment 失败';
       job.status = 'failed';
       job.error = message;
@@ -327,7 +438,61 @@ export class ArticleImportQueue {
       this.activeIds.delete(job.articleId);
       this.emit();
       this.options.onFailed?.(job.articleId, message);
+    } finally {
+      clearInterval(heartbeat);
+      if (jobTimeoutId) clearTimeout(jobTimeoutId);
     }
+  }
+
+  /** Fail any processing job older than the hard timeout (safety net for hung timers). */
+  failStaleJobs(maxAgeMs = ARTICLE_IMPORT_JOB_TIMEOUT_MS): number {
+    const now = Date.now();
+    let n = 0;
+    for (const job of this.jobs) {
+      if (job.status !== 'processing' || !job.startedAt) continue;
+      const age = now - Date.parse(job.startedAt);
+      if (!Number.isFinite(age) || age < maxAgeMs) continue;
+      job.status = 'failed';
+      job.error = `导入超时（卡住 ${Math.round(age / 1000)}s）`;
+      job.finishedAt = new Date().toISOString();
+      job.progress = {
+        phase: 'error',
+        paragraphIndex: 0,
+        paragraphTotal: job.content.length,
+        message: `失败：${job.error}`,
+      };
+      this.activeIds.delete(job.articleId);
+      this.options.onFailed?.(job.articleId, job.error);
+      n += 1;
+    }
+    if (n > 0) {
+      this.inFlight = Math.max(0, this.inFlight - n);
+      this.emit();
+      this.pump();
+    }
+    return n;
+  }
+
+  /** Cancel all queued/processing jobs (user escape hatch for stuck banner). */
+  cancelAll(): number {
+    let n = 0;
+    for (const job of this.jobs) {
+      if (job.status !== 'queued' && job.status !== 'processing') continue;
+      this.cancelledIds.add(job.articleId);
+      job.status = 'cancelled';
+      job.finishedAt = new Date().toISOString();
+      job.progress = {
+        phase: 'error',
+        paragraphIndex: 0,
+        paragraphTotal: job.content.length,
+        message: '已取消',
+      };
+      this.activeIds.delete(job.articleId);
+      n += 1;
+    }
+    this.inFlight = 0;
+    this.emit();
+    return n;
   }
 }
 

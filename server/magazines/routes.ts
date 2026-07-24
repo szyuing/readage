@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { MAGAZINE_SOURCES } from './config';
-import { loadArticle, loadIndex, loadIssueById } from './store';
+import {
+  loadArticle,
+  loadIndex,
+  loadIssueById,
+  loadRecommendationCandidates,
+} from './store';
 import { getSyncStatus, runMagazineSync } from './sync';
 
 export function createMagazineRouter(): Router {
@@ -70,6 +75,29 @@ export function createMagazineRouter(): Router {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: { code: 'ARTICLE_FAILED', message } });
+    }
+  });
+
+  /**
+   * Full articles for the interactive recommendation feed (Memory V2 ranking pool).
+   * Query: ?limit=48 (1–120)
+   */
+  router.get('/recommendation-candidates', async (req, res) => {
+    try {
+      const rawLimit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 48;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 48;
+      const articles = await loadRecommendationCandidates(limit);
+      res.json({
+        ok: true,
+        count: articles.length,
+        articles,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({
+        ok: false,
+        error: { code: 'RECOMMENDATION_POOL_FAILED', message },
+      });
     }
   });
 

@@ -1,7 +1,12 @@
-import type { Article, ArticleLevelRating, TranslationResult } from '../../types';
+import type {
+  Article,
+  ArticleLevelRating,
+  ArticleTranslationResult,
+  TranslationResult,
+} from '../../types';
 import { postTutor } from '../tutorClient';
 
-export type EnrichPhase = 'idle' | 'translating' | 'rating' | 'done' | 'error';
+export type EnrichPhase = 'idle' | 'translating' | 'rating' | 'parallel' | 'done' | 'error';
 
 export interface EnrichProgress {
   phase: EnrichPhase;
@@ -13,6 +18,8 @@ export interface EnrichProgress {
   wordCount?: number;
   charCount?: number;
 }
+
+export type TranslateMode = 'full_article' | 'paragraph_pool' | 'skipped';
 
 export interface EnrichResult {
   paragraphTranslations: string[];
@@ -26,6 +33,8 @@ export interface EnrichResult {
   ratingTruncated: boolean;
   /** True when some source paragraphs were split to fit translate limits. */
   paragraphsSplit: boolean;
+  /** How paragraph translations were produced. */
+  translateMode: TranslateMode;
 }
 
 /** Limits sized for ~10,000-word (万字) active-reading imports. */
@@ -39,6 +48,16 @@ export const IMPORT_LIMITS = {
    * ~10k English words often span 55–100k characters depending on vocabulary length.
    */
   MAX_RATING_CHARS: 120_000,
+  /**
+   * Paragraph-level concurrency when article is > 120k chars (or full-translate fails).
+   * Product rule: default is full-article one-shot; only oversized → 4-way segment pool.
+   */
+  TRANSLATE_CONCURRENCY: 4,
+  /**
+   * Full article in ONE LLM call when total characters ≤ this limit (12 万字).
+   * Must stay ≤ tutorValidation paragraphs/articleContext budget (120_000).
+   */
+  MAX_FULL_ARTICLE_TRANSLATE_CHARS: 120_000,
   /** Product target for long-form smoke tests. */
   TEN_THOUSAND_WORDS: 10_000,
 } as const;
@@ -47,7 +66,42 @@ const {
   MAX_PARAGRAPHS,
   MAX_CHARS_PER_PARAGRAPH,
   MAX_RATING_CHARS,
+  TRANSLATE_CONCURRENCY,
+  MAX_FULL_ARTICLE_TRANSLATE_CHARS,
 } = IMPORT_LIMITS;
+
+/**
+ * Run async work over items with a fixed concurrency pool.
+ * Results stay index-aligned with `items`.
+ */
+export async function mapPool<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+  onItemDone?: (completed: number, total: number) => void
+): Promise<R[]> {
+  const total = items.length;
+  const results = new Array<R>(total);
+  if (total === 0) return results;
+
+  const limit = Math.max(1, Math.min(concurrency, total));
+  let nextIndex = 0;
+  let completed = 0;
+
+  async function runOne(): Promise<void> {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= total) return;
+      results[index] = await worker(items[index], index);
+      completed += 1;
+      onItemDone?.(completed, total);
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => runOne()));
+  return results;
+}
 
 /** Count whitespace-separated English tokens. */
 export function countWords(text: string): number {
@@ -132,55 +186,74 @@ export function splitOversizedParagraph(
 }
 
 function expandAndCapParagraphs(paragraphs: string[]): string[] {
-  const expanded: string[] = [];
-  for (const para of paragraphs) {
-    for (const part of splitOversizedParagraph(para)) {
-      expanded.push(part);
-      if (expanded.length >= MAX_PARAGRAPHS) return expanded;
-    }
-  }
-  return expanded;
+  return paragraphs.flatMap((paragraph) => splitOversizedParagraph(paragraph));
 }
 
 /**
- * Normalize article.content into translate units (split oversized, cap count).
+ * Normalize article.content into bounded translate units without dropping source paragraphs.
+ * `sourceParagraphIndexes` maps each processing unit back to the immutable source content.
  */
 export function prepareImportParagraphs(content: string[]): {
   paragraphs: string[];
+  sourceParagraphIndexes: number[];
+  sourceParagraphCount: number;
   paragraphsSplit: boolean;
   wordCount: number;
   charCount: number;
 } {
-  const raw = content.map((p) => p.trim()).filter(Boolean);
   let paragraphsSplit = false;
-  const expanded: string[] = [];
+  const paragraphs: string[] = [];
+  const sourceParagraphIndexes: number[] = [];
 
-  for (const para of raw) {
-    const parts = splitOversizedParagraph(para);
+  content.forEach((sourceParagraph, sourceIndex) => {
+    const trimmed = sourceParagraph.trim();
+    if (!trimmed) return;
+
+    const parts = splitOversizedParagraph(trimmed);
     if (parts.length > 1) paragraphsSplit = true;
     for (const part of parts) {
-      expanded.push(part);
-      if (expanded.length >= MAX_PARAGRAPHS) {
-        const body = expanded.join('\n\n');
-        return {
-          paragraphs: expanded,
-          paragraphsSplit,
-          wordCount: countWords(body),
-          charCount: countChars(body),
-        };
-      }
+      paragraphs.push(part);
+      sourceParagraphIndexes.push(sourceIndex);
     }
-  }
+  });
 
-  const body = expanded.join('\n\n');
+  const body = paragraphs.join('\n\n');
   return {
-    paragraphs: expanded,
+    paragraphs,
+    sourceParagraphIndexes,
+    sourceParagraphCount: content.length,
     paragraphsSplit,
     wordCount: countWords(body),
     charCount: countChars(body),
   };
 }
 
+function alignTranslationsToSourceParagraphs(
+  translations: string[],
+  prepared: Pick<
+    ReturnType<typeof prepareImportParagraphs>,
+    'sourceParagraphIndexes' | 'sourceParagraphCount'
+  >
+): string[] {
+  const translationsBySource = Array.from(
+    { length: prepared.sourceParagraphCount },
+    () => [] as string[]
+  );
+
+  translations.forEach((translation, unitIndex) => {
+    const sourceIndex = prepared.sourceParagraphIndexes[unitIndex];
+    if (sourceIndex === undefined) return;
+    translationsBySource[sourceIndex].push(translation);
+  });
+
+  return translationsBySource.map((parts) => parts.join('\n\n'));
+}
+
+/**
+ * Whether import still needs work.
+ * Rating: one official levelRating per article (summary required).
+ * Magazine-only `level` hints without levelRating still need a real rating pass.
+ */
 export function needsImportEnrichment(
   article: Pick<Article, 'content'> & Partial<Pick<Article, 'paragraphTranslations' | 'levelRating'>>
 ): boolean {
@@ -191,8 +264,9 @@ export function needsImportEnrichment(
     Array.isArray(translations)
     && translations.length === n
     && translations.every((t) => typeof t === 'string' && t.trim().length > 0);
-  const hasRating = Boolean(article.levelRating?.level && article.levelRating?.summary);
-  return !translationsComplete || !hasRating;
+  /** Single official grade: must have CEFR + rationale (not a bare magazine levelHint). */
+  const hasOfficialRating = Boolean(article.levelRating?.level && article.levelRating?.summary);
+  return !translationsComplete || !hasOfficialRating;
 }
 
 function clip(text: string, max: number): string {
@@ -200,10 +274,248 @@ function clip(text: string, max: number): string {
   return `${text.slice(0, max - 1)}…`;
 }
 
+type ParagraphPoolReason = 'oversized' | 'too_many_paragraphs' | 'full_failed' | 'forced';
+
+async function translateParagraphsConcurrent(
+  paragraphs: string[],
+  options: {
+    title: string;
+    targetLanguage: string;
+    concurrency: number;
+    reason: ParagraphPoolReason;
+    fetcher?: typeof fetch;
+    onProgress?: (progress: EnrichProgress) => void;
+    wordCount: number;
+    charCount: number;
+  }
+): Promise<string[]> {
+  const total = paragraphs.length;
+  const {
+    concurrency,
+    targetLanguage,
+    fetcher,
+    onProgress,
+    title,
+    wordCount,
+    charCount,
+    reason,
+  } = options;
+
+  const reasonLabel =
+    reason === 'oversized'
+      ? '超长文章'
+      : reason === 'full_failed'
+        ? '全文翻译失败'
+        : '强制分段';
+
+  onProgress?.({
+    phase: 'translating',
+    paragraphIndex: 0,
+    paragraphTotal: total,
+    message: `${reasonLabel}，${concurrency} 路段并发 0/${total}…`,
+    wordCount,
+    charCount,
+  });
+
+  return mapPool(
+    paragraphs,
+    concurrency,
+    async (paragraph, i) => {
+      const source = clip(paragraph, MAX_CHARS_PER_PARAGRAPH);
+      try {
+        const response = await postTutor<TranslationResult>(
+          {
+            intent: 'translate',
+            message: source,
+            targetLanguage,
+            paragraphIndex: i + 1,
+            paragraphTotal: total,
+            topic: title,
+          },
+          fetcher
+        );
+        const translated = response.result.translatedText?.trim() || '';
+        return translated || `（第 ${i + 1} 段翻译为空）`;
+      } catch (error) {
+        const reasonText = error instanceof Error ? error.message : '翻译失败';
+        return `（第 ${i + 1} 段翻译失败：${reasonText}）`;
+      }
+    },
+    (completed, totalCount) => {
+      onProgress?.({
+        phase: 'translating',
+        paragraphIndex: completed,
+        paragraphTotal: totalCount,
+        message: `${reasonLabel}，${concurrency} 路段并发 ${completed}/${totalCount}…`,
+        wordCount,
+        charCount,
+      });
+    }
+  );
+}
+
+async function runTranslation(
+  paragraphs: string[],
+  prepared: { wordCount: number; charCount: number; paragraphsSplit: boolean },
+  options: {
+    title: string;
+    targetLanguage: string;
+    paragraphConcurrency: number;
+    forceParagraphPool?: boolean;
+    fetcher?: typeof fetch;
+    onProgress?: (progress: EnrichProgress) => void;
+    /** When true, progress messages note that rating runs in parallel. */
+    parallelWithRating?: boolean;
+  }
+): Promise<{ paragraphTranslations: string[]; translateMode: TranslateMode }> {
+  const total = paragraphs.length;
+  const {
+    title,
+    targetLanguage,
+    paragraphConcurrency,
+    forceParagraphPool,
+    fetcher,
+    onProgress,
+    parallelWithRating,
+  } = options;
+  const parallelNote = parallelWithRating ? '（与评级并行）' : '';
+
+  const isOversized = prepared.charCount > MAX_FULL_ARTICLE_TRANSLATE_CHARS;
+  const hasTooManyParagraphs = total > MAX_PARAGRAPHS;
+  const canFullArticle = !forceParagraphPool && !isOversized && !hasTooManyParagraphs;
+
+  if (canFullArticle) {
+    onProgress?.({
+      phase: parallelWithRating ? 'parallel' : 'translating',
+      paragraphIndex: 0,
+      paragraphTotal: total,
+      message: `正在全文一次翻译（强制 ${total} 段对齐）${parallelNote}…`,
+      wordCount: prepared.wordCount,
+      charCount: prepared.charCount,
+    });
+
+    try {
+      const response = await postTutor<ArticleTranslationResult>(
+        {
+          intent: 'translate_article',
+          paragraphs,
+          paragraphTotal: total,
+          targetLanguage,
+          topic: title,
+        },
+        fetcher
+      );
+      const translations = response.result.translations || [];
+      if (translations.length !== total) {
+        throw new Error(
+          `段落数不匹配：模型返回 ${translations.length} 段，需要 ${total} 段`
+        );
+      }
+      const paragraphTranslations = translations.map(
+        (t, i) => (typeof t === 'string' && t.trim() ? t.trim() : `（第 ${i + 1} 段翻译为空）`)
+      );
+      onProgress?.({
+        phase: parallelWithRating ? 'parallel' : 'translating',
+        paragraphIndex: total,
+        paragraphTotal: total,
+        message: `全文翻译完成（${total} 段对齐）${parallelNote}`,
+        wordCount: prepared.wordCount,
+        charCount: prepared.charCount,
+      });
+      return { paragraphTranslations, translateMode: 'full_article' };
+    } catch {
+      const paragraphTranslations = await translateParagraphsConcurrent(paragraphs, {
+        title,
+        targetLanguage,
+        concurrency: paragraphConcurrency,
+        reason: 'full_failed',
+        fetcher,
+        onProgress,
+        wordCount: prepared.wordCount,
+        charCount: prepared.charCount,
+      });
+      return { paragraphTranslations, translateMode: 'paragraph_pool' };
+    }
+  }
+
+  const paragraphTranslations = await translateParagraphsConcurrent(paragraphs, {
+    title,
+    targetLanguage,
+    concurrency: paragraphConcurrency,
+    reason: forceParagraphPool
+      ? 'forced'
+      : hasTooManyParagraphs
+        ? 'too_many_paragraphs'
+        : 'oversized',
+    fetcher,
+    onProgress,
+    wordCount: prepared.wordCount,
+    charCount: prepared.charCount,
+  });
+  return { paragraphTranslations, translateMode: 'paragraph_pool' };
+}
+
+async function runRating(
+  paragraphs: string[],
+  prepared: { wordCount: number; charCount: number },
+  options: {
+    title: string;
+    fetcher?: typeof fetch;
+    onProgress?: (progress: EnrichProgress) => void;
+    parallelWithTranslation?: boolean;
+  }
+): Promise<{ levelRating: ArticleLevelRating; ratingTruncated: boolean }> {
+  const fullBody = paragraphs.join('\n\n');
+  const ratingBody = clip(fullBody, MAX_RATING_CHARS);
+  const ratingTruncated = ratingBody.length < fullBody.length;
+  const parallelNote = options.parallelWithTranslation ? '（与翻译并行）' : '';
+
+  options.onProgress?.({
+    phase: options.parallelWithTranslation ? 'parallel' : 'rating',
+    paragraphIndex: 0,
+    paragraphTotal: paragraphs.length,
+    message: ratingTruncated
+      ? `正在 CEFR 评级（已截断至 ${MAX_RATING_CHARS} 字符）${parallelNote}…`
+      : `正在 CEFR 评级${parallelNote}…`,
+    wordCount: prepared.wordCount,
+    charCount: prepared.charCount,
+  });
+
+  try {
+    const response = await postTutor<ArticleLevelRating>(
+      {
+        intent: 'rate_article',
+        articleContext: ratingBody,
+        topic: options.title,
+      },
+      options.fetcher
+    );
+    let levelRating = response.result;
+    if (ratingTruncated) {
+      levelRating = {
+        ...levelRating,
+        summary: `${levelRating.summary}（注：正文超过 ${MAX_RATING_CHARS} 字符，评级基于截断样本。）`,
+      };
+    }
+    return { levelRating, ratingTruncated };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : '评级失败';
+    return {
+      levelRating: {
+        level: 'B1',
+        difficultyScore: 50,
+        summary: `AI 评级失败（${reason}），暂用默认 B1。可稍后重新导入。`,
+      },
+      ratingTruncated,
+    };
+  }
+}
+
 /**
- * Import pipeline: translate each paragraph with AI, then rate the full article.
- * Continues on per-paragraph failures so rating can still run.
- * Sized for 万字 (~10k English words) via IMPORT_LIMITS.
+ * Import enrichment: translation + CEFR rating.
+ * - Default: full-article translate (≤120k chars); else 4-way paragraph pool.
+ * - Translate and rate run **in parallel** when both are needed (rating uses English source).
+ * - Article-level queue concurrency is independent (queue.ts).
  */
 export async function enrichArticleOnImport(
   article: Pick<Article, 'title' | 'content'>,
@@ -214,6 +526,13 @@ export async function enrichArticleOnImport(
     skipTranslation?: boolean;
     /** Skip CEFR rating (translate only). */
     skipRating?: boolean;
+    /**
+     * Override paragraph-pool concurrency
+     * (default 4 when >120k chars or full-article translate fails).
+     */
+    translateConcurrency?: number;
+    /** Force fallback paragraph pool (skip full-article path). */
+    forceParagraphPool?: boolean;
     fetcher?: typeof fetch;
   }
 ): Promise<EnrichResult> {
@@ -223,113 +542,86 @@ export async function enrichArticleOnImport(
   const onProgress = options?.onProgress;
   const fetcher = options?.fetcher;
   const targetLanguage = options?.targetLanguage || 'Chinese';
+  const paragraphConcurrency = options?.translateConcurrency ?? TRANSLATE_CONCURRENCY;
 
   if (total === 0) {
     throw new Error('文章没有可处理的段落。');
   }
 
-  const paragraphTranslations: string[] = [];
+  const needTranslate = !options?.skipTranslation;
+  const needRating = !options?.skipRating;
+  const parallel = needTranslate && needRating;
 
-  if (!options?.skipTranslation) {
-    for (let i = 0; i < total; i += 1) {
-      onProgress?.({
-        phase: 'translating',
-        paragraphIndex: i + 1,
-        paragraphTotal: total,
-        message: `正在翻译第 ${i + 1}/${total} 段…`,
-        wordCount: prepared.wordCount,
-        charCount: prepared.charCount,
-      });
-
-      const source = clip(paragraphs[i], MAX_CHARS_PER_PARAGRAPH);
-      try {
-        const response = await postTutor<TranslationResult>(
-          {
-            intent: 'translate',
-            message: source,
-            targetLanguage,
-            paragraphIndex: i + 1,
-            paragraphTotal: total,
-            topic: article.title,
-          },
-          fetcher
-        );
-        const translated = response.result.translatedText?.trim() || '';
-        paragraphTranslations.push(translated || `（第 ${i + 1} 段翻译为空）`);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : '翻译失败';
-        paragraphTranslations.push(`（第 ${i + 1} 段翻译失败：${reason}）`);
-      }
-    }
-  } else {
-    paragraphTranslations.push(...paragraphs.map(() => ''));
-  }
-
-  let levelRating: ArticleLevelRating = {
-    level: 'B1',
-    difficultyScore: 50,
-    summary: '未能完成 AI 评级，暂用默认 B1。',
-  };
-
-  const fullBody = paragraphs.join('\n\n');
-  const ratingBody = clip(fullBody, MAX_RATING_CHARS);
-  const ratingTruncated = ratingBody.length < fullBody.length;
-
-  if (!options?.skipRating) {
+  if (parallel) {
     onProgress?.({
-      phase: 'rating',
+      phase: 'parallel',
       paragraphIndex: 0,
       paragraphTotal: total,
-      message: ratingTruncated
-        ? `正在对全文进行 CEFR 评级（已截断至 ${MAX_RATING_CHARS} 字符）…`
-        : '正在对全文进行 CEFR 评级…',
+      message: '翻译与 CEFR 评级并行中…',
       wordCount: prepared.wordCount,
       charCount: prepared.charCount,
     });
-
-    try {
-      const response = await postTutor<ArticleLevelRating>(
-        {
-          intent: 'rate_article',
-          articleContext: ratingBody,
-          topic: article.title,
-        },
-        fetcher
-      );
-      levelRating = response.result;
-      if (ratingTruncated) {
-        levelRating = {
-          ...levelRating,
-          summary: `${levelRating.summary}（注：正文超过 ${MAX_RATING_CHARS} 字符，评级基于截断样本。）`,
-        };
-      }
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : '评级失败';
-      levelRating = {
-        level: 'B1',
-        difficultyScore: 50,
-        summary: `AI 评级失败（${reason}），暂用默认 B1。可稍后重新导入。`,
-      };
-    }
   }
+
+  const translatePromise = needTranslate
+    ? runTranslation(paragraphs, prepared, {
+        title: article.title,
+        targetLanguage,
+        paragraphConcurrency,
+        forceParagraphPool: options?.forceParagraphPool,
+        fetcher,
+        onProgress,
+        parallelWithRating: parallel,
+      })
+    : Promise.resolve({
+        paragraphTranslations: paragraphs.map(() => ''),
+        translateMode: 'skipped' as TranslateMode,
+      });
+
+  const ratingPromise = needRating
+    ? runRating(paragraphs, prepared, {
+        title: article.title,
+        fetcher,
+        onProgress,
+        parallelWithTranslation: parallel,
+      })
+    : Promise.resolve({
+        levelRating: {
+          level: 'B1',
+          difficultyScore: 50,
+          summary: '未能完成 AI 评级，暂用默认 B1。',
+        } satisfies ArticleLevelRating,
+        ratingTruncated: false,
+      });
+
+  const [translateResult, ratingResult] = await Promise.all([
+    translatePromise,
+    ratingPromise,
+  ]);
 
   onProgress?.({
     phase: 'done',
     paragraphIndex: total,
     paragraphTotal: total,
-    message: '导入 enrichment 完成',
+    message: parallel
+      ? '导入完成（翻译 + 评级已并行）'
+      : '导入 enrichment 完成',
     wordCount: prepared.wordCount,
     charCount: prepared.charCount,
   });
 
   return {
-    paragraphTranslations,
-    levelRating,
-    level: levelRating.level,
+    paragraphTranslations: alignTranslationsToSourceParagraphs(
+      translateResult.paragraphTranslations,
+      prepared
+    ),
+    levelRating: ratingResult.levelRating,
+    level: ratingResult.levelRating.level,
     wordCount: prepared.wordCount,
     charCount: prepared.charCount,
-    ratingTruncated,
+    ratingTruncated: ratingResult.ratingTruncated,
     paragraphsSplit: prepared.paragraphsSplit,
+    translateMode: translateResult.translateMode,
   };
 }
 
@@ -338,18 +630,10 @@ export function applyEnrichmentToArticle<T extends Article>(
   article: T,
   enrichment: EnrichResult
 ): T {
-  // If import expanded/split paragraphs, persist the processed units so
-  // translations stay index-aligned with content.
-  const prepared = prepareImportParagraphs(article.content);
-  const content =
-    prepared.paragraphs.length === article.content.length
-    && prepared.paragraphs.every((p, i) => p === article.content[i]?.trim())
-      ? article.content
-      : prepared.paragraphs;
-
   return {
     ...article,
-    content,
+    // Source content is canonical and immutable; processing units are never persisted over it.
+    content: article.content,
     paragraphTranslations: enrichment.paragraphTranslations,
     levelRating: enrichment.levelRating,
     level: enrichment.level,

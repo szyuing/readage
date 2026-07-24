@@ -35,27 +35,43 @@ function getClient(): OpenAI {
   return client;
 }
 
+export interface StepGenerateOptions {
+  model?: string;
+  temperature?: number;
+  /** Abort upstream generation when the browser disconnects or a budget expires. */
+  signal?: AbortSignal;
+}
+
 /**
  * Chat completion returning parsed JSON (schema described in the prompt).
  */
 export async function stepGenerateJson<T>(
   prompt: string,
-  options?: { model?: string; temperature?: number }
+  options?: StepGenerateOptions
 ): Promise<T> {
   const model = options?.model || getStepChatModel();
-  const response = await getClient().chat.completions.create({
-    model,
-    temperature: options?.temperature ?? 0.4,
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are the English AI active-reading tutor backend. Always respond with a single valid JSON object only, no markdown fences.',
-      },
-      { role: 'user', content: prompt },
-    ],
-  });
+  if (options?.signal?.aborted) {
+    const error = new Error('Aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  const response = await getClient().chat.completions.create(
+    {
+      model,
+      temperature: options?.temperature ?? 0.4,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are the English AI active-reading tutor backend. Always respond with a single valid JSON object only, no markdown fences.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    },
+    { signal: options?.signal }
+  );
 
   const text = response.choices[0]?.message?.content || '{}';
   return JSON.parse(text) as T;

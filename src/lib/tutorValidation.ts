@@ -3,11 +3,18 @@
 const INTENTS = new Set<TutorIntent>([
   'explain',
   'translate',
+  'translate_article',
   'recommend_article',
+  'rewrite_article',
   'rate_article',
   'discuss',
   'oral_feedback',
 ]);
+
+/** Max paragraphs for a single full-article translate call. */
+export const MAX_TRANSLATE_ARTICLE_PARAGRAPHS = 400;
+/** Max total characters across all paragraphs in one translate_article call. */
+export const MAX_TRANSLATE_ARTICLE_CHARS = 120_000;
 
 const STRING_LIMITS: Partial<Record<keyof TutorRequest, number>> = {
   articleId: 200,
@@ -95,6 +102,25 @@ export function validateTutorRequest(input: unknown): TutorRequestValidation {
       return fail('paragraphTotal must be a positive integer.');
     }
     value.paragraphTotal = body.paragraphTotal;
+  }
+
+  if (body.paragraphs !== undefined) {
+    if (!Array.isArray(body.paragraphs)) return fail('paragraphs must be an array.');
+    if (body.paragraphs.length === 0) return fail('paragraphs must not be empty.');
+    if (body.paragraphs.length > MAX_TRANSLATE_ARTICLE_PARAGRAPHS) {
+      return fail(`paragraphs exceeds ${MAX_TRANSLATE_ARTICLE_PARAGRAPHS} items.`);
+    }
+    if (body.paragraphs.some((p) => typeof p !== 'string')) {
+      return fail('Each paragraph must be a string.');
+    }
+    const paragraphs = (body.paragraphs as string[]).map((p) => p.trim()).filter(Boolean);
+    if (paragraphs.length === 0) return fail('paragraphs must contain non-empty strings.');
+    const totalChars = paragraphs.reduce((sum, p) => sum + p.length, 0);
+    if (totalChars > MAX_TRANSLATE_ARTICLE_CHARS) {
+      return fail(`paragraphs total characters exceed ${MAX_TRANSLATE_ARTICLE_CHARS}.`);
+    }
+    value.paragraphs = paragraphs;
+    value.paragraphTotal = paragraphs.length;
   }
 
   return { ok: true, value };

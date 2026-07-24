@@ -157,3 +157,59 @@ export function validateRecommendedArticle(
     article: errors.length === 0 ? { ...candidate, keyWords } : undefined,
   };
 }
+
+/**
+ * Validate a CEFR level-rewrite candidate.
+ * Soft on review-word density (rewrites prioritize readability at target level);
+ * still requires structure and optional soft presence of review words when provided.
+ */
+export function validateRewrittenArticle(
+  article: unknown,
+  reviewWords: string[] = []
+): ArticleValidationResult {
+  const parsed = parseRecommendedArticle(article);
+  if (!parsed.article) {
+    return {
+      isValid: false,
+      errors: parsed.errors,
+      metrics: { wordCount: 0, newWordCount: 0, newWordDensity: 0 },
+    };
+  }
+
+  const candidate = parsed.article;
+  const text = candidate.paragraphs.join(' ');
+  const wordCount = Math.max(1, countWords(candidate.paragraphs));
+  const reviewSet = new Set(reviewWords.map(toLemma).filter(Boolean));
+  const keyWords = sanitizeKeyWords(text, candidate.keyWords);
+  const newWords = keyWords.filter((word) => !reviewSet.has(word));
+  const newWordDensity = newWords.length / wordCount;
+  const errors: string[] = [];
+
+  if (!candidate.title.trim()) errors.push('Title is required.');
+  if (!candidate.description.trim()) errors.push('Description is required.');
+  if (candidate.paragraphs.length < 2) errors.push('At least two paragraphs are required.');
+  if (wordCount < 80) errors.push('Rewritten article is too short (minimum ~80 words).');
+  if (candidate.paragraphs.length > 14) errors.push('Too many paragraphs (maximum 14).');
+
+  // Soft: if review words given, require at least half to appear (not all).
+  if (reviewSet.size > 0) {
+    const present = [...reviewSet].filter((word) => textContainsLemma(text, word));
+    const minRequired = Math.max(1, Math.ceil(reviewSet.size * 0.5));
+    if (present.length < minRequired) {
+      errors.push(
+        `Expected at least ${minRequired} review word(s) in the rewrite; found ${present.length}.`
+      );
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    metrics: {
+      wordCount,
+      newWordCount: newWords.length,
+      newWordDensity,
+    },
+    article: errors.length === 0 ? { ...candidate, keyWords } : undefined,
+  };
+}

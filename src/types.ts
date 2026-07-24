@@ -1,4 +1,4 @@
-﻿/** P1-P4 screen map. */
+/** P1-P4 screen map. */
 export type ScreenType = 'home' | 'library' | 'reading' | 'learning' | 'history';
 
 export type ArticleSource =
@@ -6,8 +6,18 @@ export type ArticleSource =
   | 'library'
   | 'ai_generated'
   | 'oral_session'
-  | 'magazine';
+  | 'magazine'
+  /** LLM rewrite of an existing article at a target CEFR level. */
+  | 'level_rewrite';
 export type ArticleStatus = 'Completed' | 'In Progress';
+export type ReadingMode = 'single' | 'recommendation-feed';
+export type ReadingAdvanceReason = 'completed' | 'skipped';
+
+export interface ReadingAdvancePayload {
+  articleId: string;
+  reason: ReadingAdvanceReason;
+  exposedLemmas: string[];
+}
 export type ProficiencyLevel = 0 | 1 | 2 | 3 | 4;
 
 export type MagazineSourceId = 'economist' | 'new_yorker' | 'atlantic' | 'wired' | string;
@@ -84,7 +94,10 @@ export type LearningEventType =
   | 'review_start'
   | 'add_review'
   | 'incorrect_use'
-  | 'avoidance';
+  | 'avoidance'
+  | 'article_open'
+  | 'article_complete'
+  | 'weak_point';
 
 /** AI CEFR rating produced on article import. */
 export interface ArticleLevelRating {
@@ -111,6 +124,8 @@ export interface Article {
   level?: string;
   topic?: string;
   lastOpenedAt?: string;
+  /** Time when every paragraph first satisfied the active-reading visibility rule. */
+  completedAt?: string;
   /** Words intentionally woven in for due review (AI-generated / targeted review). */
   embeddedReviewWords?: string[];
   magazineIssueId?: string;
@@ -128,6 +143,12 @@ export interface Article {
    */
   importEnrichmentStatus?: 'pending' | 'processing' | 'ready' | 'failed';
   importEnrichmentError?: string;
+  /** If this article was rewritten from another, the original article id. */
+  parentArticleId?: string;
+  /** CEFR level the user requested when generating a level_rewrite version. */
+  rewriteTargetLevel?: string;
+  /** Optional title of the parent article for UI ("改写自…"). */
+  parentArticleTitle?: string;
 }
 
 export interface ReviewWord {
@@ -263,6 +284,13 @@ export interface ArticleSession {
   lastOpenedAt: string;
 }
 
+export interface WeakPointMetric {
+  skill: string;
+  issueCount: number;
+  severity: number;
+  lastSeenAt?: string;
+}
+
 export interface ArticleProgressRow {
   article: Article;
   clickCount: number;
@@ -279,10 +307,17 @@ export interface LearningSignals {
 export type TutorIntent =
   | 'explain'
   | 'translate'
+  | 'translate_article'
   | 'recommend_article'
+  | 'rewrite_article'
   | 'rate_article'
   | 'discuss'
   | 'oral_feedback';
+
+/** Full-article translate: one Chinese string per English paragraph (same length). */
+export interface ArticleTranslationResult {
+  translations: string[];
+}
 
 export interface TutorRequest {
   intent: TutorIntent;
@@ -300,6 +335,11 @@ export interface TutorRequest {
   paragraphIndex?: number;
   /** Total paragraphs when translating one paragraph during import. */
   paragraphTotal?: number;
+  /**
+   * Ordered English paragraphs for intent `translate_article`.
+   * Model must return the same number of Chinese translations.
+   */
+  paragraphs?: string[];
 }
 
 export interface TutorSuccessResponse<T> {
