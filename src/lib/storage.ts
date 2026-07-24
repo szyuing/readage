@@ -8,7 +8,6 @@ export const STORAGE_KEYS = {
   proficiency: `${PREFIX}:proficiency`,
   events: `${PREFIX}:events`,
   sessions: `${PREFIX}:sessions`,
-  activeArticleId: `${PREFIX}:activeArticleId`,
   weakPoints: `${PREFIX}:weakPoints`,
   learningDays: `${PREFIX}:learningDays`,
   readingAssessment: `${PREFIX}:readingAssessment`,
