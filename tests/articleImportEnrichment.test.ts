@@ -46,6 +46,46 @@ test('needsImportEnrichment detects missing translations or rating', () => {
   );
 });
 
+test('planImportEnrichment only requests missing steps', async () => {
+  const { planImportEnrichment, hasCompleteParagraphTranslations, hasOfficialLevelRating } =
+    await import('../src/lib/articleImport');
+
+  const base = {
+    content: ['Hello world.', 'Second paragraph.'],
+  };
+
+  const none = planImportEnrichment(base);
+  assert.equal(none.needTranslation, true);
+  assert.equal(none.needRating, true);
+
+  const withRating = {
+    ...base,
+    levelRating: { level: 'B2' as const, difficultyScore: 55, summary: '已有评级' },
+  };
+  const translateOnly = planImportEnrichment(withRating);
+  assert.equal(translateOnly.needTranslation, true);
+  assert.equal(translateOnly.needRating, false);
+  assert.equal(translateOnly.existingLevelRating?.level, 'B2');
+  assert.equal(hasOfficialLevelRating(withRating), true);
+
+  const withTranslations = {
+    ...base,
+    paragraphTranslations: ['你好。', '第二段。'],
+  };
+  const rateOnly = planImportEnrichment(withTranslations);
+  assert.equal(rateOnly.needTranslation, false);
+  assert.equal(rateOnly.needRating, true);
+  assert.equal(hasCompleteParagraphTranslations(withTranslations), true);
+
+  const done = planImportEnrichment({
+    ...base,
+    paragraphTranslations: ['你好。', '第二段。'],
+    levelRating: { level: 'B1', difficultyScore: 40, summary: 'ok' },
+  });
+  assert.equal(done.needTranslation, false);
+  assert.equal(done.needRating, false);
+});
+
 test('mapPool respects concurrency and preserves order', async () => {
   assert.equal(IMPORT_LIMITS.TRANSLATE_CONCURRENCY, 4);
   assert.equal(IMPORT_LIMITS.MAX_FULL_ARTICLE_TRANSLATE_CHARS, 120_000);

@@ -62,8 +62,15 @@ import { MyLearningScreen } from './components/MyLearningScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { LibraryScreen } from './components/LibraryScreen';
 import { EnterArticleModal } from './components/EnterArticleModal';
-import { OralPracticeModal } from './components/OralPracticeModal';
-import { LayoutGrid, BookOpen, BarChart3, History, Sparkles, Library } from 'lucide-react';
+import {
+  ReadingAssessmentScreen,
+  type ReadingAssessmentResult,
+} from './components/ReadingAssessmentScreen';
+import {
+  normalizeUserReadingAssessment,
+  resolveUserCefrLevel,
+} from './lib/userReadingProfile';
+import { LayoutGrid, BookOpen, BarChart3, History, Library, ClipboardCheck, Sparkles } from 'lucide-react';
 import {
   useDueWords,
   useProficiencyStats,
@@ -169,6 +176,15 @@ export default function App() {
     [],
     normalizeLearningDateKeys
   );
+  const [assessmentResult, setAssessmentResult] = usePersistentState<ReadingAssessmentResult | null>(
+    STORAGE_KEYS.readingAssessment,
+    null,
+    normalizeUserReadingAssessment
+  );
+  const userCefrLevel = useMemo(
+    () => resolveUserCefrLevel(assessmentResult),
+    [assessmentResult]
+  );
   const [isRecommending, setIsRecommending] = useState(false);
   const [recommendPhase, setRecommendPhase] = useState<'local' | 'ai' | null>(null);
   const [isRewriting, setIsRewriting] = useState(false);
@@ -185,7 +201,6 @@ export default function App() {
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
   const [showEnterArticle, setShowEnterArticle] = useState(false);
-  const [showOralPractice, setShowOralPractice] = useState(false);
   const importQueueSnapshot = useArticleImportQueue();
 
   const [reviewClock, setReviewClock] = useState(() => Date.now());
@@ -264,19 +279,38 @@ export default function App() {
         setHistory((previous) =>
           previous.map((item) => {
             if (item.id !== articleId) return item;
-            // One rating per article: never overwrite an intentional rewrite rating
-            // or an already-complete official levelRating with a second AI grade.
-            const hasOfficial =
-              Boolean(item.levelRating?.level && item.levelRating?.summary)
-              && (item.source === 'level_rewrite' || Boolean(item.rewriteTargetLevel));
-            const levelRating = hasOfficial ? item.levelRating : enriched.levelRating;
-            const level = hasOfficial
+            // Never overwrite a complete official CEFR (rewrite lock or prior AI grade).
+            const hadOfficial =
+              Boolean(item.levelRating?.level && item.levelRating?.summary);
+            const levelRating = hadOfficial ? item.levelRating : enriched.levelRating;
+            const level = hadOfficial
               ? (item.level || item.levelRating?.level)
               : (enriched.level || enriched.levelRating?.level || item.level);
+
+            // Prefer newly produced translations; keep prior complete ones if enrichment skipped translate.
+            const n = item.content?.length ?? 0;
+            const enrichedOk =
+              Array.isArray(enriched.paragraphTranslations)
+              && enriched.paragraphTranslations.length === n
+              && enriched.paragraphTranslations.every(
+                (t) => typeof t === 'string' && t.trim().length > 0
+              );
+            const priorOk =
+              Array.isArray(item.paragraphTranslations)
+              && item.paragraphTranslations.length === n
+              && item.paragraphTranslations.every(
+                (t) => typeof t === 'string' && t.trim().length > 0
+              );
+            const paragraphTranslations = enrichedOk
+              ? enriched.paragraphTranslations
+              : priorOk
+                ? item.paragraphTranslations
+                : (enriched.paragraphTranslations || item.paragraphTranslations);
+
             return {
               ...item,
-              content: enriched.content,
-              paragraphTranslations: enriched.paragraphTranslations,
+              content: enriched.content?.length ? enriched.content : item.content,
+              paragraphTranslations,
               levelRating,
               level,
               importEnrichmentStatus: 'ready',
@@ -302,16 +336,32 @@ export default function App() {
     return () => window.clearInterval(staleTimer);
   }, [setHistory]);
 
-  /** Resume incomplete enrichment after reload (store-first model). */
+  /**
+   * Resume incomplete enrichment after reload (store-first model).
+   * Completes any history article missing 译文 and/or official CEFR 评级
+   * (including previously failed jobs) via step-3.7-flash translate + rate.
+   */
   useEffect(() => {
-    const pending = history.filter(
-      (a) =>
-        needsImportEnrichment(a)
-        && a.importEnrichmentStatus !== 'failed'
-    );
+    const pending = history.filter((a) => needsImportEnrichment(a));
     if (pending.length === 0) return;
-    getArticleImportQueue().resumePending(pending);
-    // Only on mount / when history identity first loads — avoid re-queue loops.
+
+    // Clear failed markers so UI shows "processing" while resume runs.
+    setHistory((previous) =>
+      previous.map((item) =>
+        needsImportEnrichment(item)
+          ? {
+              ...item,
+              importEnrichmentStatus: 'pending',
+              importEnrichmentError: undefined,
+            }
+          : item
+      )
+    );
+    const n = getArticleImportQueue().resumePending(pending);
+    if (n > 0) {
+      console.log(`[import] resume ${n} article(s) missing translation and/or rating`);
+    }
+    // Only on mount — history is loaded sync from localStorage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -599,12 +649,6 @@ export default function App() {
     pushEvent('article_complete', { articleId });
   };
 
-  const handleOralAssessed = (text: string, result: StructuredAssessResult) => {
-    const targets = dueLemmas.slice(0, 5);
-    applyAssessment(text, result, targets, 0.12);
-    pushEvent('discussion', { detail: `oral: ${text.slice(0, 72)}` });
-  };
-
   const openRecommendationArticle = (article: Article) => {
     ingestArticle(article, {
       open: true,
@@ -648,7 +692,7 @@ export default function App() {
       {
         library,
         history,
-        userLevel: 'B1',
+        userLevel: userCefrLevel,
         useFullCatalog: true,
         onPhase: (phase) => {
           setRecommendPhase(phase === 'ai' ? 'ai' : 'local');
@@ -942,17 +986,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col">
       <div className="bg-[#EFECE3] border-b border-[#E0DBCF] px-4 py-2 flex items-center justify-between text-xs font-medium text-[#5B544C]">
-        <div className="flex items-center gap-1 font-serif text-sm font-semibold text-[#2C2723]">
-          <Sparkles className="w-4 h-4 text-[#C35E37]" />
-          <span>English AI · P0</span>
-        </div>
-
         <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
           {(
             [
               { id: 'home' as const, label: 'P1', icon: LayoutGrid },
               { id: 'library' as const, label: 'Library', icon: Library },
               { id: 'reading' as const, label: 'P2', icon: BookOpen },
+              { id: 'assessment' as const, label: '测试', icon: ClipboardCheck },
               { id: 'learning' as const, label: 'P3', icon: BarChart3 },
               { id: 'history' as const, label: 'P4', icon: History },
             ] as const
@@ -980,7 +1020,9 @@ export default function App() {
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
-              {id === 'library' && <span className="hidden sm:inline">{label}</span>}
+              {(id === 'library' || id === 'assessment') && (
+                <span className="hidden sm:inline">{label}</span>
+              )}
             </button>
           ))}
         </div>
@@ -1049,16 +1091,39 @@ export default function App() {
             onEnterArticle={() => setShowEnterArticle(true)}
             onPickFromLibrary={() => setCurrentScreen('library')}
             onRecommendForMe={handleRecommendForMe}
-            onOralPractice={() => setShowOralPractice(true)}
             onGoToLearning={() => setCurrentScreen('learning')}
             onStartTargetedReview={handleStartTargetedReview}
+            onStartEnglishTest={() => setCurrentScreen('assessment')}
             pendingReviewCount={dueLemmas.length}
+            assessedBand={assessmentResult?.recommendedBand ?? null}
+            hasAssessment={Boolean(assessmentResult)}
+          />
+        )}
+
+        {currentScreen === 'assessment' && (
+          <ReadingAssessmentScreen
+            onBack={() => setCurrentScreen('home')}
+            previousResult={assessmentResult}
+            onComplete={(result) => {
+              setAssessmentResult(result);
+              pushEvent('review_start', {
+                detail: `cefr_assessment:${result.recommendedBand}`,
+              });
+            }}
+            onStartRecommendedReading={(band) => {
+              void startRecommendationReading(
+                `CEFR ${band} reading practice`,
+                dueLemmas.slice(0, 5)
+              );
+            }}
           />
         )}
 
         {currentScreen === 'library' && (
           <LibraryScreen
             userArticles={userArticles}
+            userCefrLevel={userCefrLevel}
+            hasAssessment={Boolean(assessmentResult)}
             onSelectArticle={(article) =>
               ingestArticle(article, {
                 open: true,
@@ -1078,6 +1143,7 @@ export default function App() {
             onRetryImport={() => retryImportEnrichment(activeArticle.id)}
             isRewriting={isRewriting}
             onRewriteAtLevel={(level) => handleRewriteAtLevel(activeArticle, level)}
+            preferredCefrLevel={userCefrLevel}
             onOpenParentArticle={
               activeArticle.parentArticleId
                 ? () => handleOpenParentArticle(activeArticle.parentArticleId!)
@@ -1146,6 +1212,10 @@ export default function App() {
               const art = history.find((a) => a.id === id);
               if (art) ingestArticle(art, { open: true, source: 'history' });
             }}
+            onStartEnglishTest={() => setCurrentScreen('assessment')}
+            onStartRecommendedReading={handleRecommendForMe}
+            assessedBand={assessmentResult?.recommendedBand ?? null}
+            assessmentCompletedAt={assessmentResult?.completedAt ?? null}
             articlesReadCount={completedArticleCount}
             masteredWordsCount={bands.mastered}
             learningWordsCount={bands.learning}
@@ -1177,13 +1247,6 @@ export default function App() {
         />
       )}
 
-      {showOralPractice && (
-        <OralPracticeModal
-          onClose={() => setShowOralPractice(false)}
-          reviewWords={dueLemmas.slice(0, 5)}
-          onAssessed={handleOralAssessed}
-        />
-      )}
     </div>
   );
 }

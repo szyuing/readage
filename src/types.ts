@@ -1,5 +1,5 @@
-/** P1-P4 screen map. */
-export type ScreenType = 'home' | 'library' | 'reading' | 'learning' | 'history';
+/** P1-P4 screen map (+ CEFR reading assessment as English test). */
+export type ScreenType = 'home' | 'library' | 'reading' | 'learning' | 'history' | 'assessment';
 
 export type ArticleSource =
   | 'user_input'
@@ -325,8 +325,7 @@ export type TutorIntent =
   | 'recommend_article'
   | 'rewrite_article'
   | 'rate_article'
-  | 'discuss'
-  | 'oral_feedback';
+  | 'discuss';
 
 /** Full-article translate: one Chinese string per English paragraph (same length). */
 export interface ArticleTranslationResult {

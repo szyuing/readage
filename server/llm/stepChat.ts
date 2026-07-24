@@ -19,8 +19,25 @@ export function isStepChatConfigured(): boolean {
   return Boolean(getStepApiKey());
 }
 
+export type StepReasoningEffort = 'low' | 'medium' | 'high';
+
 export function getStepChatModel(): string {
   return process.env.STEP_CHAT_MODEL || 'step-3.7-flash';
+}
+
+/** Translation tasks: default step-3.7-flash (fast, high-frequency). */
+export function getStepTranslateModel(): string {
+  return process.env.STEP_TRANSLATE_MODEL || process.env.STEP_CHAT_MODEL || 'step-3.7-flash';
+}
+
+/**
+ * step-3.7-flash reasoning levels: low | medium | high.
+ * Translation defaults to low (simple rewrite / extraction workload).
+ */
+export function getStepTranslateReasoningEffort(): StepReasoningEffort {
+  const raw = (process.env.STEP_TRANSLATE_REASONING_EFFORT || 'low').toLowerCase();
+  if (raw === 'medium' || raw === 'high' || raw === 'low') return raw;
+  return 'low';
 }
 
 let client: OpenAI | null = null;
@@ -40,6 +57,11 @@ function getClient(): OpenAI {
 export interface StepGenerateOptions {
   model?: string;
   temperature?: number;
+  /**
+   * step-3.7-flash Chat Completions: reasoning_effort (low | medium | high).
+   * Omit for models that do not support the field.
+   */
+  reasoningEffort?: StepReasoningEffort;
   /** Abort upstream generation when the browser disconnects or a budget expires. */
   signal?: AbortSignal;
   /** Hard provider deadline. Defaults to 60 seconds. */
@@ -88,6 +110,9 @@ export async function stepGenerateJson<T>(
         model,
         temperature: options?.temperature ?? 0.4,
         response_format: { type: 'json_object' },
+        ...(options?.reasoningEffort
+          ? { reasoning_effort: options.reasoningEffort }
+          : {}),
         messages: [
           {
             role: 'system',
@@ -120,6 +145,9 @@ export async function stepChatText(
       {
         model,
         temperature: options?.temperature ?? 0.6,
+        ...(options?.reasoningEffort
+          ? { reasoning_effort: options.reasoningEffort }
+          : {}),
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },

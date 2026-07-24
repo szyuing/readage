@@ -67,6 +67,7 @@ export function expandLemmaIndexToCandidates(
         content: [],
         level: row.level,
         topic: row.topic,
+        estimatedWordCount: row.wordCount,
       },
       lemmas,
     });

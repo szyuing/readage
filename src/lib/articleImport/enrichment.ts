@@ -249,24 +249,58 @@ function alignTranslationsToSourceParagraphs(
   return translationsBySource.map((parts) => parts.join('\n\n'));
 }
 
-/**
- * Whether import still needs work.
- * Rating: one official levelRating per article (summary required).
- * Magazine-only `level` hints without levelRating still need a real rating pass.
- */
-export function needsImportEnrichment(
-  article: Pick<Article, 'content'> & Partial<Pick<Article, 'paragraphTranslations' | 'levelRating'>>
+type EnrichableArticle = Pick<Article, 'content'> &
+  Partial<Pick<Article, 'paragraphTranslations' | 'levelRating' | 'source' | 'rewriteTargetLevel'>>;
+
+/** True when every source paragraph has a non-empty Chinese translation. */
+export function hasCompleteParagraphTranslations(
+  article: Pick<Article, 'content'> & Partial<Pick<Article, 'paragraphTranslations'>>
 ): boolean {
   const n = article.content?.length ?? 0;
   if (n === 0) return false;
   const translations = article.paragraphTranslations;
-  const translationsComplete =
+  return (
     Array.isArray(translations)
     && translations.length === n
-    && translations.every((t) => typeof t === 'string' && t.trim().length > 0);
-  /** Single official grade: must have CEFR + rationale (not a bare magazine levelHint). */
-  const hasOfficialRating = Boolean(article.levelRating?.level && article.levelRating?.summary);
-  return !translationsComplete || !hasOfficialRating;
+    && translations.every((t) => typeof t === 'string' && t.trim().length > 0)
+  );
+}
+
+/**
+ * Single official grade: CEFR + rationale required
+ * (bare magazine `level` hints without summary still need AI rating).
+ */
+export function hasOfficialLevelRating(
+  article: Partial<Pick<Article, 'levelRating'>>
+): boolean {
+  return Boolean(article.levelRating?.level && article.levelRating?.summary);
+}
+
+/**
+ * Whether import still needs work (missing translations and/or official rating).
+ */
+export function needsImportEnrichment(article: EnrichableArticle): boolean {
+  if ((article.content?.length ?? 0) === 0) return false;
+  return !hasCompleteParagraphTranslations(article) || !hasOfficialLevelRating(article);
+}
+
+/** Plan which enrichment steps remain; preserves already-complete fields. */
+export interface EnrichmentPlan {
+  needTranslation: boolean;
+  needRating: boolean;
+  existingTranslations?: string[];
+  existingLevelRating?: ArticleLevelRating;
+}
+
+export function planImportEnrichment(article: EnrichableArticle): EnrichmentPlan {
+  const translationsDone = hasCompleteParagraphTranslations(article);
+  const ratingDone = hasOfficialLevelRating(article);
+  return {
+    needTranslation: !translationsDone,
+    needRating: !ratingDone,
+    existingTranslations: translationsDone ? article.paragraphTranslations : undefined,
+    existingLevelRating: ratingDone ? article.levelRating : undefined,
+  };
 }
 
 function clip(text: string, max: number): string {

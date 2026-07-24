@@ -8,7 +8,6 @@ const INTENTS = new Set<TutorIntent>([
   'rewrite_article',
   'rate_article',
   'discuss',
-  'oral_feedback',
 ]);
 
 /** Max paragraphs for a single full-article translate call. */

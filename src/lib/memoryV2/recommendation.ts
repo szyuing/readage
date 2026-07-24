@@ -1,33 +1,45 @@
 /**
  * 文章推荐算法 V2.2
- * 基于 Memory Score �?FSRS 状态的智能推荐
+ * 基于 Memory Score �?FSRS 状态的智能推荐
  */
 
 import { WordProficiencyView } from './memorySystem';
+import {
+  buildCefrRecommendationProfile,
+  cefrBandDistance,
+  getCefrRelation,
+  projectBandsOntoCatalog,
+  resolveUserCefrLevel,
+  type CefrRecommendationProfile,
+  type CefrRelation,
+} from '../userReadingProfile';
+import { normalizeCefrBand, type CefrBand } from '../articleLevel';
 
 export interface Article {
   id: string;
   title: string;
   content: string[];
   level?: string;
+  levelRating?: { level?: string };
+  rewriteTargetLevel?: string;
   topic?: string;
   estimatedWordCount?: number;
 }
 
 export interface ArticleCandidate {
   article: Article;
-  /** 文章中的所有词形还原后的单词列�?*/
+  /** 文章中的所有词形还原后的单词列�?*/
   lemmas: string[];
 }
 
 export interface RecommendationScore {
   articleId: string;
   score: number;
-  /** 需要复习的单词�?*/
+  /** 需要复习的单词�?*/
   dueWordsCount: number;
-  /** L0-L2 的单词数（学习区�?*/
+  /** L0-L2 的单词数（学习区�?*/
   learningZoneCount: number;
-  /** L3-L4 的单词数（巩固区�?*/
+  /** L3-L4 的单词数（巩固区�?*/
   consolidationZoneCount: number;
   /** 未知单词数（无记忆状态） */
   unknownWordsCount: number;
@@ -35,6 +47,9 @@ export interface RecommendationScore {
   averageMemoryScore: number;
   /** 推荐原因 */
   reason: string;
+  /** CEFR contribution, exposed for diagnostics and tie-break tests. */
+  cefrScore?: number;
+  cefrRelation?: CefrRelation;
 }
 
 export interface RecommendationParams {
@@ -42,17 +57,17 @@ export interface RecommendationParams {
   userLevel?: string;
   /** 用户感兴趣的主题 */
   preferredTopics?: string[];
-  /** 优先推荐包含到期单词的文�?*/
+  /** 优先推荐包含到期单词的文�?*/
   prioritizeDueWords?: boolean;
-  /** 学习区单词占比权�?*/
+  /** 学习区单词占比权�?*/
   learningZoneWeight?: number;
-  /** 巩固区单词占比权�?*/
+  /** 巩固区单词占比权�?*/
   consolidationZoneWeight?: number;
   /** 到期单词权重 */
   dueWordsWeight?: number;
-  /** 最小学习区单词�?*/
+  /** 最小学习区单词�?*/
   minLearningZoneWords?: number;
-  /** 最大未知单词占�?*/
+  /** 最大未知单词占�?*/
   maxUnknownWordsRatio?: number;
   /**
    * Minimum share of article lemmas present in the proficiency map before
@@ -62,9 +77,34 @@ export interface RecommendationParams {
   minProficiencyCoverage?: number;
   /** Base score used when ranking with little/no personalized evidence. */
   coldStartBaseScore?: number;
+  /** Shared assessment-derived CEFR profile. */
+  cefrProfile?: CefrRecommendationProfile;
+  /** Effective catalog bands after projecting the ideal user window. */
+  allowedBands?: CefrBand[];
+  /** Apply a reversible CEFR candidate window when assessment data exists. */
+  cefrHardFilter?: boolean;
+  /** Minimum eligible candidates required before the CEFR window is kept. */
+  minCandidatesAfterCefrFilter?: number;
 }
 
-const DEFAULT_RECOMMENDATION_PARAMS: Required<RecommendationParams> = {
+type ResolvedRecommendationParams = {
+  userLevel: string;
+  preferredTopics: string[];
+  prioritizeDueWords: boolean;
+  learningZoneWeight: number;
+  consolidationZoneWeight: number;
+  dueWordsWeight: number;
+  minLearningZoneWords: number;
+  maxUnknownWordsRatio: number;
+  minProficiencyCoverage: number;
+  coldStartBaseScore: number;
+  cefrProfile?: CefrRecommendationProfile;
+  allowedBands?: CefrBand[];
+  cefrHardFilter: boolean;
+  minCandidatesAfterCefrFilter: number;
+};
+
+const DEFAULT_RECOMMENDATION_PARAMS: ResolvedRecommendationParams = {
   userLevel: 'B1',
   preferredTopics: [],
   prioritizeDueWords: true,
@@ -75,12 +115,14 @@ const DEFAULT_RECOMMENDATION_PARAMS: Required<RecommendationParams> = {
   maxUnknownWordsRatio: 0.3,
   minProficiencyCoverage: 0.2,
   coldStartBaseScore: 10,
+  cefrHardFilter: false,
+  minCandidatesAfterCefrFilter: 8,
 };
 
 /** True when the user has too little global evidence for hard personalization. */
 export function isGlobalColdStart(
   proficiencyMap: Map<string, WordProficiencyView>,
-  params: Pick<Required<RecommendationParams>, 'minLearningZoneWords'> = DEFAULT_RECOMMENDATION_PARAMS
+  params: Pick<ResolvedRecommendationParams, 'minLearningZoneWords'> = DEFAULT_RECOMMENDATION_PARAMS
 ): boolean {
   return proficiencyMap.size < Math.max(1, params.minLearningZoneWords);
 }
@@ -106,7 +148,7 @@ export function shouldUsePersonalizedFilters(
   candidate: ArticleCandidate,
   proficiencyMap: Map<string, WordProficiencyView>,
   params: Pick<
-    Required<RecommendationParams>,
+    ResolvedRecommendationParams,
     'minLearningZoneWords' | 'minProficiencyCoverage'
   > = DEFAULT_RECOMMENDATION_PARAMS
 ): boolean {
@@ -121,20 +163,86 @@ export function shouldUsePersonalizedFilters(
  * 文章推荐引擎
  */
 export class RecommendationEngine {
-  constructor(private params: RecommendationParams = {}) {
+  private params: ResolvedRecommendationParams;
+
+  constructor(params: RecommendationParams = {}) {
     this.params = { ...DEFAULT_RECOMMENDATION_PARAMS, ...params };
   }
 
+  private getCefrProfile(): CefrRecommendationProfile {
+    return this.params.cefrProfile
+      ?? buildCefrRecommendationProfile(
+        null,
+        resolveUserCefrLevel({ recommendedBand: this.params.userLevel })
+      );
+  }
+
+  private articleLevel(candidate: ArticleCandidate): string {
+    return normalizeCefrBand(
+      candidate.article.levelRating?.level
+      || candidate.article.level
+      || candidate.article.rewriteTargetLevel
+    );
+  }
+
+  private effectiveAllowedBands(candidates: readonly ArticleCandidate[]): CefrBand[] {
+    if (this.params.allowedBands && this.params.allowedBands.length > 0) {
+      return this.params.allowedBands;
+    }
+    const profile = this.getCefrProfile();
+    return projectBandsOntoCatalog(
+      profile.idealBands,
+      candidates.map((candidate) => this.articleLevel(candidate))
+    );
+  }
+
+  private cefrContribution(
+    candidate: ArticleCandidate,
+    allowedBands: readonly CefrBand[]
+  ): { score: number; relation: CefrRelation } {
+    const profile = this.getCefrProfile();
+    const articleLevel = this.articleLevel(candidate);
+    const relation = getCefrRelation(articleLevel, profile.userLevel);
+    if (relation === 'unknown') return { score: 0, relation };
+
+    const isEffectivePreferred = allowedBands.includes(articleLevel as CefrBand);
+    let base = 0;
+    switch (relation) {
+      case 'exact':
+        base = 10;
+        break;
+      case 'adjacent-higher':
+        base = 4;
+        break;
+      case 'adjacent-lower':
+        base = 2;
+        break;
+      case 'far-higher':
+        // A projected fallback (e.g. A2 → the catalog's B2 floor) is useful,
+        // but should remain weaker than an actual exact/adjacent match.
+        base = isEffectivePreferred ? 3 : -3;
+        break;
+      case 'far-lower':
+        base = isEffectivePreferred ? 1 : -1;
+        break;
+    }
+
+    return {
+      score: base * profile.cefrWeight,
+      relation,
+    };
+  }
+
   /**
-   * 为候选文章打�?
+   * 为候选文章打�?
    *
-   * 评分逻辑�?
-   * 1. 到期单词�?× dueWordsWeight
-   * 2. 学习区单词数（L0-L2）�?learningZoneWeight
-   * 3. 巩固区单词数（L3-L4）�?consolidationZoneWeight
+   * 评分逻辑�?
+   * 1. 到期单词�?× dueWordsWeight
+   * 2. 学习区单词数（L0-L2）�?learningZoneWeight
+   * 3. 巩固区单词数（L3-L4）�?consolidationZoneWeight
    * 4. 主题匹配加成
    * 5. 等级匹配加成
-   * 6. 惩罚未知单词过多的文�?
+   * 6. 惩罚未知单词过多的文�?
    */
   scoreArticle(
     candidate: ArticleCandidate,
@@ -142,8 +250,9 @@ export class RecommendationEngine {
     now: Date = new Date()
   ): RecommendationScore {
     const { article, lemmas } = candidate;
-    const params = this.params as Required<RecommendationParams>;
+    const params = this.params;
     const personalized = shouldUsePersonalizedFilters(candidate, proficiencyMap, params);
+    const allowedBands = this.effectiveAllowedBands([candidate]);
 
     let dueWordsCount = 0;
     let learningZoneCount = 0;
@@ -165,12 +274,12 @@ export class RecommendationEngine {
       knownWordsCount++;
       totalMemoryScore += proficiency.memoryScore;
 
-      // 检查是否到�?
+      // 检查是否到�?
       if (new Date(proficiency.nextReview) <= now) {
         dueWordsCount++;
       }
 
-      // 按等级分�?
+      // 按等级分�?
       if (proficiency.level <= 2) {
         learningZoneCount++;
       } else {
@@ -192,7 +301,7 @@ export class RecommendationEngine {
       reason = `包含 ${dueWordsCount} 个到期单词`;
     }
 
-    // 2. 学习区单词得�?
+    // 2. 学习区单词得�?
     if (learningZoneCount >= params.minLearningZoneWords) {
       score += learningZoneCount * params.learningZoneWeight;
       if (reason) reason += `，`;
@@ -201,7 +310,7 @@ export class RecommendationEngine {
       score += learningZoneCount * params.learningZoneWeight * 0.5;
     }
 
-    // 3. 巩固区单词得�?
+    // 3. 巩固区单词得�?
     if (consolidationZoneCount > 0) {
       score += consolidationZoneCount * params.consolidationZoneWeight;
     }
@@ -213,13 +322,30 @@ export class RecommendationEngine {
       reason += `匹配偏好主题`;
     }
 
-    // 5. 等级匹配加成
-    if (article.level && article.level === params.userLevel) {
-      score *= 1.1;
-      if (!reason) reason = `匹配 ${article.level} 等级`;
+    // 5. CEFR is additive and applied after memory priority multipliers.
+    const cefr = this.cefrContribution(candidate, allowedBands);
+    if (cefr.score !== 0) {
+      if (reason) reason += `，`;
+      switch (cefr.relation) {
+        case 'exact':
+          reason += `匹配你的 ${this.getCefrProfile().userLevel}`;
+          break;
+        case 'adjacent-higher':
+          reason += `略高于你的 ${this.getCefrProfile().userLevel}（冲刺）`;
+          break;
+        case 'adjacent-lower':
+          reason += `略低于你的 ${this.getCefrProfile().userLevel}`;
+          break;
+        case 'far-higher':
+          reason += `明显高于你的 ${this.getCefrProfile().userLevel}`;
+          break;
+        case 'far-lower':
+          reason += `明显低于你的 ${this.getCefrProfile().userLevel}`;
+          break;
+      }
     }
 
-    // 6. 惩罚未知单词过多（仅个性化阶段�?
+    // 6. 惩罚未知单词过多（仅个性化阶段）
     if (personalized && unknownWordsRatio > params.maxUnknownWordsRatio) {
       const penalty = 1 - (unknownWordsRatio - params.maxUnknownWordsRatio);
       score *= Math.max(0.3, penalty);
@@ -232,9 +358,9 @@ export class RecommendationEngine {
       score *= 1.5;
     }
 
-    if (!reason) {
-      reason = personalized ? '�ʺϵ�ǰˮƽ' : '�����������Ƽ�';
-    }
+    if (!reason) reason = personalized ? '接近当前水平' : '冷启动推荐';
+
+    score += cefr.score;
 
     return {
       articleId: article.id,
@@ -247,6 +373,8 @@ export class RecommendationEngine {
         : Math.max(0, lemmas.length - knownWordsCount),
       averageMemoryScore,
       reason,
+      cefrScore: cefr.score,
+      cefrRelation: cefr.relation,
     };
   }
 
@@ -262,18 +390,18 @@ export class RecommendationEngine {
       this.scoreArticle(candidate, proficiencyMap, now)
     );
 
-    // 按分数降序排�?
+    // 按分数降序排�?
     scores.sort((a, b) => b.score - a.score);
 
     return scores;
   }
 
   /**
-   * 推荐最佳文�?
+   * 推荐最佳文�?
    *
-   * @param candidates - 候选文章列�?
-   * @param proficiencyMap - 单词熟练度映�?
-   * @param limit - 返回的推荐数�?
+   * @param candidates - 候选文章列�?
+   * @param proficiencyMap - 单词熟练度映�?
+   * @param limit - 返回的推荐数�?
    * @returns 推荐文章及其评分
    */
   recommend(
@@ -287,20 +415,20 @@ export class RecommendationEngine {
   }
 
   /**
-   * 过滤掉不适合的文�?
+   * 过滤掉不适合的文�?
    *
-   * 过滤条件�?
-   * - 未知单词占比超过阈�?
+   * 过滤条件�?
+   * - 未知单词占比超过阈�?
    * - 学习区单词数不足
    * - 没有任何复习价值（全是 L4 或未知）
    */
   filterCandidates(
     candidates: ArticleCandidate[],
-    proficiencyMap: Map<string, WordProficiencyView>
+    proficiencyMap: Map<string, WordProficiencyView>,
+    options: { protectedArticleIds?: ReadonlySet<string> } = {}
   ): ArticleCandidate[] {
-    const params = this.params as Required<RecommendationParams>;
-
-    return candidates.filter((candidate) => {
+    const params = this.params;
+    const filtered = candidates.filter((candidate) => {
       if (candidate.lemmas.length === 0) return false;
 
       // Global cold start, or this article has too little tracked coverage:
@@ -328,6 +456,26 @@ export class RecommendationEngine {
 
       return true;
     });
+
+    const profile = this.getCefrProfile();
+    if (!params.cefrHardFilter || !profile.hasAssessment || filtered.length === 0) {
+      return filtered;
+    }
+
+    const allowedBands = this.effectiveAllowedBands(filtered);
+    if (allowedBands.length === 0) return filtered;
+
+    const protectedArticleIds = options.protectedArticleIds ?? new Set<string>();
+    const cefrFiltered = filtered.filter((candidate) => {
+      if (protectedArticleIds.has(candidate.article.id)) return true;
+      const level = this.articleLevel(candidate);
+      return !level || allowedBands.includes(level as CefrBand);
+    });
+    const minimum = Math.min(
+      Math.max(1, params.minCandidatesAfterCefrFilter),
+      filtered.length
+    );
+    return cefrFiltered.length >= minimum ? cefrFiltered : filtered;
   }
 
   /**
@@ -339,7 +487,7 @@ export class RecommendationEngine {
 }
 
 /**
- * 多样性推荐：避免连续推荐相似主题的文�?
+ * 多样性推荐：避免连续推荐相似主题的文�?
  */
 export function diversifyRecommendations(
   recommendations: RecommendationScore[],
@@ -357,7 +505,7 @@ export function diversifyRecommendations(
     }
   }
 
-  // 降低相同主题文章的分�?
+  // 降低相同主题文章的分�?
   const adjusted = recommendations.map((rec) => {
     const article = articles.get(rec.articleId);
     if (article?.topic && recentTopics.has(article.topic)) {
@@ -436,7 +584,7 @@ export function rankCandidatesByReviewHits(
 }
 
 /**
- * 间隔重复推荐：确保到期单词得到及时复习�?
+ * 间隔重复推荐：确保到期单词得到及时复习�?
  * Primary key = unique target-word hits (not repeated lemma spam).
  */
 export function scheduleReviewArticles(
@@ -444,7 +592,7 @@ export function scheduleReviewArticles(
   candidates: ArticleCandidate[],
   targetReviewCount: number = 10
 ): ArticleCandidate[] {
-  // 按到期紧急程度排�?
+  // 按到期紧急程度排�?
   const sortedDueWords = [...dueWords].sort((a, b) => {
     const aOverdue = new Date().getTime() - new Date(a.nextReview).getTime();
     const bOverdue = new Date().getTime() - new Date(b.nextReview).getTime();
@@ -494,7 +642,7 @@ export function scoreArticlesForReview(
       ...base,
       score: hits * REVIEW_HIT_SCORE_WEIGHT + base.score,
       dueWordsCount: Math.max(base.dueWordsCount, hits),
-      reason: `���� ${hits}/${targets.length} ����ϰ��${base.reason ? `��${base.reason}` : ''}`,
+      reason: `���� ${hits}/${targets.length} ����ϰ��${base.reason ? `��${base.reason}` : ''}`,
     });
   }
 

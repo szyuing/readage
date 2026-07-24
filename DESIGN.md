@@ -10,30 +10,30 @@
 
 用**一篇文章**串起完整学习闭环，验证产品原则是否可落地：
 
-1. 用户从 **P1** 拿到文章（或进入纯口语例外场景）
-2. 在 **P2** 完成：点词查释义、讨论
-3. 每一次关键动作会更新本地**词汇熟练度**（识别分 / 产出分）
+1. 用户从 **P1** 拿到文章
+2. 在 **P2** 完成：点词打开词卡（本地词典优先）、讨论
+3. 每一次关键动作会更新本地**词汇熟练度**（Memory V2 / FSRS）
 4. 用户可在 **P3** 看到进度摘要，在 **P4** 回到历史文章
 
 ### 1.2 MVP 明确不做（Out of Scope）
 
 | 延后项 | 原因 |
 |---|---|
-| 真实 ASR 发音评测 | 仅保留输入框 + 浏览器 TTS；麦克风为占位 |
-| 持久化后端 / 多用户账号 | 当前使用浏览器 localStorage；尚未支持跨设备同步 |
+| 纯口语陪练 / StepAudio 实时语音 | 已永久下线；讨论区仅保留文字就文答疑 |
+| 持久化后端 / 多用户账号 | 当前使用浏览器 localStorage / IndexedDB；尚未支持跨设备同步 |
 | 内容安全过滤层 | 需产品/合规方案后再加 |
-| 文章库 CEFR 精细分面检索 | MVP 用固定 mock 列表代替 |
+| 文章库 CEFR 精细分面检索 | 杂志库 + 本地 lemma 索引为主 |
 | 孤立词卡刷题作为主复习路径 | 产品原则禁止；主路径改为「语境复习 → P2」 |
 
 ### 1.3 与产品文档的对齐关系
 
 | 产品页面 | MVP 路由/屏幕 | 状态 |
 |---|---|---|
-| P1 文章获取 | `home` · HomeScreen | ✅ 四入口齐全 |
-| P2 文章学习 | `reading` · ReadingScreen | ✅ 点词 / 讨论 |
+| P1 文章获取 | `home` · HomeScreen | ✅ 三入口（粘贴 / 文库 / 推荐） |
+| P2 文章学习 | `reading` · ReadingScreen | ✅ 点词词卡 / 讨论 |
 | P3 学习报告 | `learning` · MyLearningScreen | ✅ 统计 + 针对性复习入口 |
 | P4 文章历史库 | `history` · HistoryScreen | ✅ 列表回跳 P2 |
-| 纯口语例外 | OralPracticeModal | ✅ 不挂文章 |
+| 纯口语例外 | — | ❌ 永久下线 |
 
 ---
 
@@ -41,7 +41,7 @@
 
 继承产品文档第 2 节，落地为实现约束：
 
-1. **文章是核心实体**：除纯口语外，所有学习行为绑定 `articleId`
+1. **文章是核心实体**：所有学习行为绑定 `articleId`
 2. **语境优先**：针对性复习优先生成/打开含到期词的文章会话，而不是默认跳孤立闪卡
 3. **打分是副产品**：UI 不强调「刷分」；查词、讨论为主交互
 4. **双轨分数**：`recognitionScore`（看懂）与 `productionScore`（用对）分开
@@ -56,15 +56,16 @@
                     │  P1 Home    │
                     │  文章获取    │
                     └──────┬──────┘
-           ┌───────┬───────┼───────┬────────┐
-           ▼       ▼       ▼       ▼        │
-        粘贴文章  文章库  AI推荐  纯口语      │
-           │       │       │       │        │
-           └───────┴───┬───┘       │        │
-                       ▼           ▼        │
-                 ┌──────────┐  Oral Modal   │
-                 │ P2 学习页 │◄─────────────┘
-                 │ 正文+讨论 │
+           ┌───────┬───────┼────────┐
+           ▼       ▼       ▼        │
+        粘贴文章  文章库  AI推荐     │
+           │       │       │        │
+           └───────┴───┬───┘        │
+                       ▼            │
+                 ┌──────────┐       │
+                 │ P2 学习页 │◄──────┘
+                 │ 正文+词卡 │
+                 │ +讨论     │
                  └────┬─────┘
                       │ 返回 / 完成
          ┌────────────┼────────────┐
@@ -80,9 +81,8 @@
 | 入口 | 行为 |
 |---|---|
 | Enter Article | 打开粘贴/按话题生成 Modal → 写入文章列表 → 进 P2 |
-| Pick from Library | 进入 P4 风格列表（MVP 与历史共用 mock 库）→ 选文进 P2 |
-| Recommend for Me | 调用 `/api/recommend-article`，注入到期复习词 → 进 P2；失败则回退 mock |
-| Oral Practice | 打开无文章口语 Modal（原则 1 的唯一例外） |
+| Pick from Library | 杂志库 / 我的文章 → 选文进 P2 |
+| Recommend for Me | 推荐链路（Memory V2 + lemma 索引 + AI 回退）→ 进 P2 |
 
 弱入口：右下角图标 → P3；顶栏可切 P3/P4（演示用，可隐藏）。
 
@@ -90,11 +90,11 @@
 
 | 能力 | MVP 实现 |
 |---|---|
-| 点词 | 任意词可点；高亮 `keyWords` / 嵌入复习词 |
-| 查词 / 语法 | `/api/explain-grammar` → 抽屉展示音标、词性、英英+汉译、例句 |
-| 翻译 | `/api/translate`（目标语默认中文；无 key 时优雅降级） |
-| 讨论区 | 就文答疑 + 苏格拉底式追问（`intent: discuss`）；**不**更新词汇产出分 |
-| 生词 | 「加入复习」→ 更新熟练度为 L1，写入 review 列表 |
+| 点词 / 拖选 | 直接打开 **WordCardPanel**（无浮动工具栏） |
+| 词卡 | `intent: explain`；**单词语典优先**（ECDICT），短语/未命中走 AI |
+| 翻译 | 词卡内 Translate → `intent: translate`（目标语默认中文） |
+| 讨论区 | 就文答疑 + 苏格拉底式追问（`intent: discuss`）；**不**更新词汇熟练度 |
+| 生词 | 查词写入学习事件；复习由 Memory V2 / due 列表驱动 |
 
 ### 3.3 P3 · 学习报告（MyLearningScreen）
 
@@ -120,10 +120,11 @@
 | `src/components/MyLearningScreen.tsx` | P3 |
 | `src/components/HistoryScreen.tsx` | P4 / 文章库 |
 | `src/components/EnterArticleModal.tsx` | 粘贴文章 / 话题生成 |
-| `src/components/OralPracticeModal.tsx` | 纯口语例外 |
+| `src/components/WordCardPanel.tsx` | 独立词卡面板（词典优先 / AI 回退） |
+| `src/lib/wordCard.ts` | 词卡请求规范化 + 拉取闭环 |
 | `src/components/TargetedReviewModal.tsx` | 备用复习 UI（弱路径；主路径已改为语境复习） |
 | `src/data/mockArticles.ts` | 文章库 + 初始到期词 |
-| `server.ts` | 能力引擎：查词、翻译、推荐、聊天、口语反馈 |
+| `server.ts` | 能力引擎：查词（词典优先）、翻译、推荐、讨论 |
 
 视觉基调：暖纸色背景 `#F8F6F0`、衬线标题、强调色 `#C35E37`（陶土橙）。
 
@@ -138,14 +139,14 @@
 └──────────────────┬──────────────────────────┘
                    │ fetch JSON
 ┌──────────────────▼──────────────────────────┐
-│ 能力引擎层 (Express + Gemini)                 │
-│  explain-grammar · translate · recommend    │
-│  chat · oral-feedback                       │
+│ 能力引擎层 (Express + Step/Gemini)            │
+│  explain (dict-first) · translate · recommend │
+│  discuss · magazine sync                      │
 └──────────────────┬──────────────────────────┘
-                   │ (MVP 无独立 DB)
+                   │
 ┌──────────────────▼──────────────────────────┐
-│ 数据层 (浏览器 localStorage)                     │
-│  articles[] · wordProficiency{} · events[]  │
+│ 数据层 (localStorage + IndexedDB Memory V2)  │
+│  articles · memory state · events            │
 └─────────────────────────────────────────────┘
 ```
 

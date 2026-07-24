@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   currentScreen: `${PREFIX}:currentScreen`,
   weakPoints: `${PREFIX}:weakPoints`,
   learningDays: `${PREFIX}:learningDays`,
+  readingAssessment: `${PREFIX}:readingAssessment`,
 } as const;
 
 export type StorageNormalizer<T> = (value: unknown, fallback: T) => T;

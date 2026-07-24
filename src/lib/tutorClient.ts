@@ -13,7 +13,6 @@ export const TUTOR_TIMEOUT_MS: Partial<Record<TutorRequest['intent'], number>> &
   recommend_article: RECOMMENDATION_INTERACTION_BUDGET_MS,
   explain: 60_000,
   discuss: 90_000,
-  oral_feedback: 90_000,
 };
 
 /** Recommendations get one attempt; batch/long-running work keeps the existing retry policy. */

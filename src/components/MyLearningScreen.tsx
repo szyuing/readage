@@ -14,6 +14,10 @@ interface MyLearningScreenProps {
   onBack: () => void;
   onStartTargetedReview: () => void;
   onOpenArticle: (articleId: string) => void;
+  onStartEnglishTest?: () => void;
+  onStartRecommendedReading?: () => void;
+  assessedBand?: string | null;
+  assessmentCompletedAt?: string | null;
   articlesReadCount: number;
   masteredWordsCount: number;
   learningWordsCount: number;
@@ -29,6 +33,10 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   onBack,
   onStartTargetedReview,
   onOpenArticle,
+  onStartEnglishTest,
+  onStartRecommendedReading,
+  assessedBand,
+  assessmentCompletedAt,
   articlesReadCount,
   masteredWordsCount,
   learningWordsCount,
@@ -59,7 +67,6 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
         </button>
         <div>
           <h1 className="font-serif text-2xl font-semibold text-[#2C2723]">My Learning</h1>
-          <p className="text-xs text-[#8C8478]">P3 学习报告 · 真实本地学习数据</p>
         </div>
       </header>
 
@@ -70,6 +77,55 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
           <MetricCard value={streakDaysCount} label="连续学习天数" />
         </div>
+
+        <section
+          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
+          aria-labelledby="cefr-profile-heading"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="cefr-profile-heading" className="font-serif text-lg font-medium text-[#2A2621]">
+                阅读等级
+              </h2>
+              <p className="mt-1 text-sm text-[#8C8478]">
+                {assessedBand
+                  ? '来自英语测试，已同步到推荐与文库筛选。'
+                  : '尚未定级：完成英语测试后，推荐会按你的 CEFR 档位匹配。'}
+              </p>
+            </div>
+            <div className="shrink-0 rounded-xl bg-[#C35E37]/10 px-3 py-2 text-center">
+              <div className="text-xs text-[#8C8478]">CEFR</div>
+              <div className="font-serif text-xl font-semibold text-[#C35E37]">
+                {assessedBand || '—'}
+              </div>
+            </div>
+          </div>
+          {assessmentCompletedAt && (
+            <p className="text-xs text-[#8C8478]">
+              最近测试：{new Date(assessmentCompletedAt).toLocaleString()}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {onStartEnglishTest && (
+              <button
+                type="button"
+                onClick={onStartEnglishTest}
+                className="rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0]"
+              >
+                {assessedBand ? '重新测试' : '开始英语测试'}
+              </button>
+            )}
+            {assessedBand && onStartRecommendedReading && (
+              <button
+                type="button"
+                onClick={onStartRecommendedReading}
+                className="rounded-xl bg-[#C35E37] px-3 py-2 text-sm font-medium text-white hover:bg-[#A94E2B]"
+              >
+                按 {assessedBand} 推荐阅读
+              </button>
+            )}
+          </div>
+        </section>
 
         <div className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 text-sm text-[#524B43] flex flex-wrap gap-x-5 gap-y-2">
           <span>

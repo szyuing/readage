@@ -11,9 +11,11 @@ import {
   applyEnrichmentToArticle,
   enrichArticleOnImport,
   needsImportEnrichment,
+  planImportEnrichment,
   type EnrichProgress,
   type EnrichResult,
 } from './enrichment';
+import type { ArticleLevelRating } from '../../types';
 
 export type ImportJobStatus = 'queued' | 'processing' | 'done' | 'failed' | 'cancelled';
 
@@ -54,9 +56,14 @@ export interface ImportJob {
   finishedAt?: string;
   /**
    * When set, import only translates — rating is already the article's sole CEFR
-   * (e.g. user-chosen rewrite level). One article → one rating.
+   * (e.g. user-chosen rewrite level, or a prior complete AI grade).
+   * One article → one rating.
    */
-  lockedLevelRating?: import('../../types').ArticleLevelRating;
+  lockedLevelRating?: ArticleLevelRating;
+  /** Skip translate when paragraph translations are already complete. */
+  skipTranslation?: boolean;
+  /** Preserve existing complete translations when skipTranslation is true. */
+  existingTranslations?: string[];
 }
 
 export interface ImportQueueSnapshot {
@@ -187,7 +194,7 @@ export class ArticleImportQueue {
 
   /**
    * Enqueue enrichment for an article if needed.
-   * Returns true when a new job was added (or already in flight).
+   * Only runs missing steps (translate and/or rate); preserves complete fields.
    */
   enqueue(
     article: Article,
@@ -203,14 +210,22 @@ export class ArticleImportQueue {
       return { enqueued: true, reason: 'already_in_queue' };
     }
 
-    // Intentional rewrite rating (or any complete official grade) is locked —
-    // import must not produce a second CEFR for the same article.
-    const lockedLevelRating =
-      article.source === 'level_rewrite' && article.levelRating?.level && article.levelRating?.summary
-        ? article.levelRating
-        : article.rewriteTargetLevel && article.levelRating?.level && article.levelRating?.summary
-          ? article.levelRating
-          : undefined;
+    const plan = planImportEnrichment(article);
+    // Any complete official grade is locked — never produce a second CEFR.
+    const lockedLevelRating = plan.existingLevelRating;
+    const skipTranslation = !plan.needTranslation;
+    const existingTranslations = plan.existingTranslations
+      ? [...plan.existingTranslations]
+      : undefined;
+
+    let queueMessage = '已加入导入队列（译文 + 评级）';
+    if (skipTranslation && lockedLevelRating) {
+      queueMessage = '已齐全，跳过';
+    } else if (skipTranslation) {
+      queueMessage = '已加入队列（译文已有，仅 CEFR 评级）';
+    } else if (lockedLevelRating) {
+      queueMessage = `已加入队列（评级已锁定 ${lockedLevelRating.level}，仅翻译）`;
+    }
 
     const job: ImportJob = {
       id: `import-${article.id}-${Date.now()}`,
@@ -223,12 +238,12 @@ export class ArticleImportQueue {
         phase: 'idle',
         paragraphIndex: 0,
         paragraphTotal: article.content.length,
-        message: lockedLevelRating
-          ? `已加入队列（评级已锁定 ${lockedLevelRating.level}，仅翻译）`
-          : '已加入导入队列',
+        message: queueMessage,
       },
       enqueuedAt: new Date().toISOString(),
       lockedLevelRating,
+      skipTranslation,
+      existingTranslations,
     };
 
     this.jobs = [job, ...this.jobs];
@@ -251,13 +266,25 @@ export class ArticleImportQueue {
 
   /**
    * Re-queue history items that still need enrichment (e.g. after reload).
-   * Skips articles already in flight.
+   * Includes previously failed jobs; skips articles already in flight.
    */
   resumePending(articles: Article[]): number {
-    return this.enqueueMany(
-      articles.filter((a) => needsImportEnrichment(a)),
-      'resume'
-    );
+    let n = 0;
+    for (const article of articles.filter((a) => needsImportEnrichment(a))) {
+      // Failed / cancelled leftover gates must not block a fresh resume.
+      if (this.activeIds.has(article.id)) {
+        const inflight = this.jobs.find(
+          (j) =>
+            j.articleId === article.id
+            && (j.status === 'queued' || j.status === 'processing')
+        );
+        if (inflight) continue;
+        this.activeIds.delete(article.id);
+      }
+      const result = this.enqueue(article, 'resume');
+      if (result.enqueued && result.reason === 'queued') n += 1;
+    }
+    return n;
   }
 
   cancel(articleId: string): boolean {
@@ -356,14 +383,17 @@ export class ArticleImportQueue {
 
     let jobTimeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
+      const skipRating = Boolean(job.lockedLevelRating);
+      const skipTranslation = Boolean(job.skipTranslation);
       const enrichment = await Promise.race([
         enrichArticleOnImport(
           { title: job.title, content: job.content },
           {
             targetLanguage: this.options.targetLanguage || 'Chinese',
             fetcher: this.options.fetcher,
-            // One article → one rating: skip AI re-grade when already locked.
-            skipRating: Boolean(job.lockedLevelRating),
+            // Only run missing steps (preserve complete translations / locked CEFR).
+            skipRating,
+            skipTranslation,
             onProgress: (progress) => {
               if (this.cancelledJobs.has(job)) return;
               // Ignore late progress after this job already left processing.
@@ -405,6 +435,13 @@ export class ArticleImportQueue {
         content: job.content,
       };
       let article = applyEnrichmentToArticle(base, enrichment);
+      // Restore already-complete fields that were intentionally skipped.
+      if (skipTranslation && job.existingTranslations?.length) {
+        article = {
+          ...article,
+          paragraphTranslations: [...job.existingTranslations],
+        };
+      }
       if (job.lockedLevelRating) {
         article = {
           ...article,
@@ -412,13 +449,21 @@ export class ArticleImportQueue {
           level: job.lockedLevelRating.level,
         };
       }
+      const doneParts =
+        skipTranslation && skipRating
+          ? '无需处理'
+          : skipTranslation
+            ? '评级完成（译文已有）'
+            : skipRating
+              ? '翻译完成（评级已锁定）'
+              : '翻译与评级完成';
       job.status = 'done';
       job.finishedAt = new Date().toISOString();
       job.progress = {
         phase: 'done',
         paragraphIndex: job.content.length,
         paragraphTotal: job.content.length,
-        message: '翻译与评级完成',
+        message: doneParts,
         wordCount: enrichment.wordCount,
         charCount: enrichment.charCount,
       };

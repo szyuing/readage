@@ -259,6 +259,152 @@ test('enqueue skips already enriched articles', () => {
   assert.equal(result.reason, 'already_enriched');
 });
 
+test('enqueue only rates when translations already complete', async () => {
+  const intents: string[] = [];
+  const queue = new ArticleImportQueue();
+  let completed: { translations?: string[]; level?: string } | null = null;
+
+  queue.configure({
+    fetcher: (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}')) as { intent: string };
+      intents.push(body.intent);
+      if (body.intent === 'rate_article') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            intent: 'rate_article',
+            result: { level: 'B1', difficultyScore: 45, summary: '补评级' },
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected intent ${body.intent}`);
+    }) as typeof fetch,
+    onComplete: ({ article }) => {
+      completed = {
+        translations: article.paragraphTranslations,
+        level: article.levelRating?.level,
+      };
+    },
+  });
+
+  const article = makeArticle('rate-only', ['Hello.', 'World.']);
+  article.paragraphTranslations = ['你好。', '世界。'];
+  const result = queue.enqueue(article, 'resume');
+  assert.equal(result.enqueued, true);
+  assert.equal(result.reason, 'queued');
+
+  for (let i = 0; i < 50 && !completed; i += 1) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.ok(completed, 'job should complete');
+  assert.deepEqual(intents, ['rate_article']);
+  assert.deepEqual(completed!.translations, ['你好。', '世界。']);
+  assert.equal(completed!.level, 'B1');
+});
+
+test('enqueue only translates when official rating already locked', async () => {
+  const intents: string[] = [];
+  const queue = new ArticleImportQueue();
+  let completed: { translations?: string[]; level?: string; summary?: string } | null = null;
+
+  queue.configure({
+    fetcher: (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        intent: string;
+        paragraphs?: string[];
+      };
+      intents.push(body.intent);
+      if (body.intent === 'translate_article') {
+        const paragraphs = body.paragraphs || [];
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            intent: 'translate_article',
+            result: { translations: paragraphs.map((_, i) => `译${i + 1}`) },
+          }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`unexpected intent ${body.intent}`);
+    }) as typeof fetch,
+    onComplete: ({ article }) => {
+      completed = {
+        translations: article.paragraphTranslations,
+        level: article.levelRating?.level,
+        summary: article.levelRating?.summary,
+      };
+    },
+  });
+
+  const article = makeArticle('translate-only', ['One.', 'Two.']);
+  article.levelRating = { level: 'C1', difficultyScore: 80, summary: '锁定评级' };
+  article.level = 'C1';
+  const result = queue.enqueue(article, 'resume');
+  assert.equal(result.enqueued, true);
+
+  for (let i = 0; i < 50 && !completed; i += 1) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.ok(completed, 'job should complete');
+  assert.deepEqual(intents, ['translate_article']);
+  assert.deepEqual(completed!.translations, ['译1', '译2']);
+  assert.equal(completed!.level, 'C1');
+  assert.equal(completed!.summary, '锁定评级');
+});
+
+test('resumePending re-queues previously failed incomplete articles', async () => {
+  const queue = new ArticleImportQueue();
+  const intents: string[] = [];
+  let done = false;
+
+  queue.configure({
+    fetcher: (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}')) as {
+        intent: string;
+        paragraphs?: string[];
+      };
+      intents.push(body.intent);
+      if (body.intent === 'translate_article') {
+        const paragraphs = body.paragraphs || ['x'];
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            intent: 'translate_article',
+            result: { translations: paragraphs.map(() => '恢复译文') },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          intent: 'rate_article',
+          result: { level: 'A2', difficultyScore: 25, summary: '恢复评级' },
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch,
+    onComplete: () => {
+      done = true;
+    },
+  });
+
+  const article = makeArticle('was-failed', ['Need work.']);
+  article.importEnrichmentStatus = 'failed';
+  article.importEnrichmentError = '先前失败';
+
+  const n = queue.resumePending([article]);
+  assert.equal(n, 1);
+
+  for (let i = 0; i < 50 && !done; i += 1) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(done, true);
+  assert.ok(intents.includes('translate_article'));
+  assert.ok(intents.includes('rate_article'));
+});
+
 test('duplicate enqueue while in flight is idempotent', async () => {
   const calls: unknown[] = [];
   const queue = new ArticleImportQueue();

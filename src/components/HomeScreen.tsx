@@ -1,34 +1,60 @@
 import React from 'react';
-import { FileText, BookOpen, Star, Mic, BarChart3, Clock } from 'lucide-react';
+import { FileText, BookOpen, Star, BarChart3, Clock, ClipboardCheck } from 'lucide-react';
 import { Article } from '../types';
 
 interface HomeScreenProps {
   onEnterArticle: () => void;
   onPickFromLibrary: () => void;
   onRecommendForMe: () => void;
-  onOralPractice: () => void;
   onGoToLearning: () => void;
   onStartTargetedReview: () => void;
+  onStartEnglishTest: () => void;
   pendingReviewCount: number;
+  assessedBand?: string | null;
+  hasAssessment?: boolean;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   onEnterArticle,
   onPickFromLibrary,
   onRecommendForMe,
-  onOralPractice,
   onGoToLearning,
   onStartTargetedReview,
+  onStartEnglishTest,
   pendingReviewCount,
+  assessedBand,
+  hasAssessment = false,
 }) => {
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A]">
       {/* Top Banner Bar */}
-      <div className="w-full text-center py-3 px-4 bg-[#F1ECE1] border-b border-[#E5DFD1] text-sm text-[#5C554D] font-medium flex justify-center items-center gap-2">
+      <div className="w-full text-center py-3 px-4 bg-[#F1ECE1] border-b border-[#E5DFD1] text-sm text-[#5C554D] font-medium flex flex-wrap justify-center items-center gap-x-3 gap-y-1">
+        {hasAssessment && assessedBand ? (
+          <span>
+            阅读等级 <strong className="text-[#C35E37]">{assessedBand}</strong>
+            <button
+              type="button"
+              onClick={onStartEnglishTest}
+              className="ml-2 text-xs font-semibold text-[#C35E37] underline hover:text-[#A44B29] transition-colors"
+            >
+              重测
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartEnglishTest}
+            className="text-xs font-semibold text-[#C35E37] underline hover:text-[#A44B29] transition-colors"
+          >
+            先测一次阅读等级，推荐会更准
+          </button>
+        )}
+        <span className="hidden sm:inline text-[#D1C9B8]">·</span>
         <span>{pendingReviewCount} words ready for review</span>
         <button
+          type="button"
           onClick={onStartTargetedReview}
-          className="ml-2 text-xs font-semibold text-[#C35E37] underline hover:text-[#A44B29] transition-colors"
+          className="text-xs font-semibold text-[#C35E37] underline hover:text-[#A44B29] transition-colors"
         >
           Review Now
         </button>
@@ -74,19 +100,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
                 <Star className="w-5 h-5 text-white" />
                 <span>Recommend for Me</span>
               </span>
-              <span className="text-[11px] font-normal text-white/80">AI 为我推荐</span>
+              <span className="text-[11px] font-normal text-white/80">
+                {hasAssessment && assessedBand
+                  ? `按你的 ${assessedBand} 推荐`
+                  : 'AI 为我推荐'}
+              </span>
             </button>
 
             <button
-              onClick={onOralPractice}
-              className="flex flex-col items-center justify-center gap-1 px-5 py-4 bg-[#FAF8F3] hover:bg-[#F2ECE0] text-[#332E28] border border-[#DCD5C7] rounded-xl text-base font-medium transition-all shadow-2xs"
+              onClick={onStartEnglishTest}
+              className="flex flex-col items-center justify-center gap-1 px-5 py-4 bg-[#FAF8F3] hover:bg-[#F2ECE0] text-[#332E28] border border-[#DCD5C7] rounded-xl text-base font-medium transition-all shadow-2xs sm:col-span-2"
             >
               <span className="flex items-center gap-2">
-                <Mic className="w-5 h-5 text-[#5C544B]" />
-                <span>Oral Practice</span>
+                <ClipboardCheck className="w-5 h-5 text-[#C35E37]" />
+                <span>英语测试</span>
               </span>
-              <span className="text-[11px] font-normal text-[#8C8478]">纯口语陪练（例外）</span>
+              <span className="text-[11px] font-normal text-[#8C8478]">
+                {hasAssessment && assessedBand
+                  ? `已定级 ${assessedBand} · 可重测校准`
+                  : 'CEFR 阅读定级 · 结果同步到推荐'}
+              </span>
             </button>
+
           </div>
         </div>
       </div>

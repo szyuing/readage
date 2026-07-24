@@ -1,18 +1,16 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   MoreHorizontal,
   BookOpen,
   Globe,
-  Mic,
   MessageCircle,
   Send,
   Sparkles,
   CheckCircle2,
   X,
   Volume2,
-  Copy,
   PenLine,
 } from 'lucide-react';
 import {
@@ -42,70 +40,13 @@ import {
   minDwellMsBeforeAutoAdvance,
 } from '../lib/continuousReading';
 import { useMemoryV2Integration } from '../lib/memoryV2Integration';
+import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
+import { formatSelectionQuote } from '../lib/readingSelection';
+import { WordCardPanel } from './WordCardPanel';
 
 let recommendationNavigationHintShown = false;
 
-const REWRITE_CEFR_LEVELS = ['A2', 'B1', 'B2', 'C1'] as const;
-/** Tight gap: bar sits right above the selected word (almost touching). */
-const SELECTION_POPOVER_GAP = 2;
-/** Horizontal screen padding so the bar is not clipped on the sides. */
-const SELECTION_POPOVER_MARGIN = 8;
-/** First paint estimate before measuring the real toolbar height. */
-const SELECTION_POPOVER_EST_HEIGHT = 44;
-const SELECTION_POPOVER_EST_WIDTH = 280;
-
-type SelectionAnchor = {
-  midX: number;
-  top: number;
-  bottom: number;
-};
-
-type PopoverPos = {
-  x: number;
-  y: number;
-};
-
-/**
- * Prefer a single-line client rect for the selected text.
- * Multi-line ranges: use the topmost non-empty rect so the bar sits above the word line.
- */
-function getSelectionClientRect(range: Range): DOMRect {
-  const rects = range.getClientRects();
-  let best: DOMRect | null = null;
-  for (let i = 0; i < rects.length; i += 1) {
-    const rect = rects[i];
-    if (rect.width <= 0 || rect.height <= 0) continue;
-    if (!best || rect.top < best.top) best = rect;
-  }
-  return best ?? range.getBoundingClientRect();
-}
-
-function anchorFromRect(rect: DOMRect): SelectionAnchor {
-  return {
-    midX: rect.left + rect.width / 2,
-    top: rect.top,
-    bottom: rect.bottom,
-  };
-}
-
-/**
- * Always place the action bar directly above the selected word, tight against it.
- * Never flip below. Vertical position is not clamped into the word.
- */
-function computePopoverPosition(
-  anchor: SelectionAnchor,
-  popoverWidth: number,
-  popoverHeight: number,
-): PopoverPos {
-  const halfW = popoverWidth / 2;
-  const x = Math.min(
-    Math.max(anchor.midX, SELECTION_POPOVER_MARGIN + halfW),
-    window.innerWidth - SELECTION_POPOVER_MARGIN - halfW,
-  );
-  // Bottom edge of bar = word top - gap  →  always above and snug.
-  const y = anchor.top - SELECTION_POPOVER_GAP - popoverHeight;
-  return { x, y };
-}
+const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
 interface ReadingScreenProps {
   article: Article;
@@ -116,6 +57,8 @@ interface ReadingScreenProps {
   isRewriting?: boolean;
   /** Generate a new article version at the chosen CEFR level. */
   onRewriteAtLevel?: (level: string) => void;
+  /** User reading level from English test — highlight preferred rewrite target. */
+  preferredCefrLevel?: string;
   /** Open the parent article this rewrite was based on. */
   onOpenParentArticle?: () => void;
   onBack: () => void;
@@ -138,6 +81,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   onRetryImport,
   isRewriting = false,
   onRewriteAtLevel,
+  preferredCefrLevel,
   onOpenParentArticle,
   onBack,
   onWordClick,
@@ -153,13 +97,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 }) => {
   const [selectedText, setSelectedText] = useState<string>('');
   const [selectedContext, setSelectedContext] = useState<string>('');
-  const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
-  const [popoverPos, setPopoverPos] = useState<PopoverPos | null>(null);
   const [showRewriteLevels, setShowRewriteLevels] = useState(false);
-  const selectionPopoverRef = useRef<HTMLDivElement>(null);
 
   const [isExplaining, setIsExplaining] = useState(false);
   const [grammarResult, setGrammarResult] = useState<GrammarExplanation | null>(null);
+  const [wordCardOpen, setWordCardOpen] = useState(false);
 
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationResult, setTranslationResult] = useState<TranslationResult | null>(null);
@@ -184,6 +126,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     setChatMessages(initialChatMessages);
     setShowChatPanel(initialChatMessages.length > 0);
     setIsComposerExpanded(false);
+    setWordCardOpen(false);
+    setGrammarResult(null);
+    setIsExplaining(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id]);
 
@@ -198,102 +143,23 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [showLevelDetail, setShowLevelDetail] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
-  /** Word span from click path — used to re-pin the bar after scroll. */
-  const selectionTargetRef = useRef<HTMLElement | null>(null);
+  const wordCardAbortRef = useRef<AbortController | null>(null);
   const exposedLemmasRef = useRef<Set<string>>(new Set());
   const onExposuresRef = useRef(onExposures);
   const onReadingCompleteRef = useRef(onReadingComplete);
   const onAdvanceRef = useRef(onAdvance);
   const hasAdvancedRef = useRef(false);
   const suppressNextWordClickRef = useRef(false);
+  const rightSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   /** Wall-clock when the current article became active — gates auto-advance. */
   const articleOpenedAtRef = useRef(Date.now());
 
-  const clearSelectionPopover = useCallback(() => {
-    selectionTargetRef.current = null;
-    setPopoverPos(null);
-    setSelectionAnchor(null);
-  }, []);
-
-  const openSelectionPopover = useCallback((anchor: SelectionAnchor, targetEl?: HTMLElement | null) => {
-    selectionTargetRef.current = targetEl ?? null;
-    setSelectionAnchor(anchor);
-    // Provisional position so the bar paints immediately, then layout effect snaps to measured size.
-    setPopoverPos(
-      computePopoverPosition(
-        anchor,
-        SELECTION_POPOVER_EST_WIDTH,
-        SELECTION_POPOVER_EST_HEIGHT,
-      ),
-    );
-  }, []);
-
-  // Measure real toolbar size, then glue it tight above the selected word.
-  useLayoutEffect(() => {
-    if (!selectionAnchor || !selectedText || !selectionPopoverRef.current) return;
-    const { offsetWidth, offsetHeight } = selectionPopoverRef.current;
-    if (offsetWidth <= 0 || offsetHeight <= 0) return;
-    const next = computePopoverPosition(selectionAnchor, offsetWidth, offsetHeight);
-    setPopoverPos((prev) => {
-      if (prev && Math.abs(prev.x - next.x) < 0.5 && Math.abs(prev.y - next.y) < 0.5) {
-        return prev;
-      }
-      return next;
-    });
-  }, [selectionAnchor, selectedText]);
-
-  // While open, keep the bar locked tight above the word (scroll / resize).
   useEffect(() => {
-    if (!selectionAnchor || !selectedText) return;
-
-    const applyAnchor = (rect: DOMRect) => {
-      const next = anchorFromRect(rect);
-      setSelectionAnchor((prev) => {
-        if (
-          prev
-          && Math.abs(prev.midX - next.midX) < 0.5
-          && Math.abs(prev.top - next.top) < 0.5
-          && Math.abs(prev.bottom - next.bottom) < 0.5
-        ) {
-          return prev;
-        }
-        return next;
-      });
-    };
-
-    const refreshAnchorFromDom = () => {
-      const selection = window.getSelection();
-      if (selection && !selection.isCollapsed && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        if (!contentRef.current || contentRef.current.contains(range.commonAncestorContainer)) {
-          const rect = getSelectionClientRect(range);
-          if (rect.width > 0 || rect.height > 0) {
-            applyAnchor(rect);
-            return;
-          }
-        }
-      }
-
-      const target = selectionTargetRef.current;
-      if (target && document.contains(target)) {
-        const rect = target.getBoundingClientRect();
-        if (rect.width > 0 || rect.height > 0) {
-          applyAnchor(rect);
-          return;
-        }
-      }
-
-      clearSelectionPopover();
-    };
-
-    window.addEventListener('scroll', refreshAnchorFromDom, true);
-    window.addEventListener('resize', refreshAnchorFromDom);
     return () => {
-      window.removeEventListener('scroll', refreshAnchorFromDom, true);
-      window.removeEventListener('resize', refreshAnchorFromDom);
+      wordCardAbortRef.current?.abort();
     };
-  }, [selectionAnchor, selectedText, clearSelectionPopover]);
+  }, []);
 
   useEffect(() => {
     onExposuresRef.current = onExposures;
@@ -496,6 +362,49 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     ...(article.embeddedReviewWords || []),
   ];
 
+  const closeWordCard = useCallback(() => {
+    wordCardAbortRef.current?.abort();
+    wordCardAbortRef.current = null;
+    setWordCardOpen(false);
+    setIsExplaining(false);
+    setGrammarResult(null);
+  }, []);
+
+  const openWordCard = useCallback(
+    async (wordOrPhrase: string, contextSentence = '') => {
+      const request = createWordCardRequest(wordOrPhrase, contextSentence);
+      if (!request) return;
+
+      wordCardAbortRef.current?.abort();
+      const controller = new AbortController();
+      wordCardAbortRef.current = controller;
+
+      setSelectedText(request.selectedText);
+      setSelectedContext(request.contextSentence);
+      setWordCardOpen(true);
+      setIsExplaining(true);
+      setGrammarResult(null);
+      onGrammarQuery?.(request.selectedText);
+
+      try {
+        const result = await fetchWordCard(request, {
+          articleId: article.id,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        setGrammarResult(result);
+      } catch (error) {
+        if (error instanceof Error && /cancelled|abort/i.test(error.message)) return;
+        // fetchWordCard already falls back offline; keep panel open on unexpected errors.
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsExplaining(false);
+        }
+      }
+    },
+    [article.id, onGrammarQuery],
+  );
+
   const handleWordClick = (
     word: string,
     paragraph: string,
@@ -509,13 +418,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       return;
     }
     e.stopPropagation();
-    const cleanWord = word.replace(/[^a-zA-Z\s']/g, '').trim();
-    if (!cleanWord) return;
+    const request = createWordCardRequest(word, paragraph);
+    if (!request) return;
+    const cleanWord = request.selectedText;
 
     onWordClick?.(cleanWord);
 
     // Memory V2.2: 记录单词点击
-    // 查找段落索引和单词在段落中的位置
     const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph]');
     const learningUnit = findLearningUnitAtTokenIndex(
       paragraph,
@@ -530,11 +439,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       );
     }
 
-    const target = e.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    setSelectedText(cleanWord);
-    setSelectedContext(paragraph);
-    openSelectionPopover(anchorFromRect(rect), target);
+    void openWordCard(cleanWord, paragraph);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -567,96 +472,106 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     window.setTimeout(() => setCopyHint(null), 1600);
   };
 
-  /** Left-button drag select → show actions + auto-copy selection to clipboard. */
+  const getCaretRangeFromPoint = (x: number, y: number): Range | null => {
+    const documentWithCaret = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null;
+    };
+    if (documentWithCaret.caretRangeFromPoint) {
+      return documentWithCaret.caretRangeFromPoint(x, y);
+    }
+    const position = documentWithCaret.caretPositionFromPoint?.(x, y);
+    if (!position) return null;
+    const range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    range.collapse(true);
+    return range;
+  };
+
+  const isArticleSelection = (selection: Selection | null): selection is Selection => {
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+    if (!contentRef.current) return false;
+    return contentRef.current.contains(selection.getRangeAt(0).commonAncestorContainer);
+  };
+
+  const quoteSelectedText = (text: string) => {
+    setUserInput((currentInput) => formatSelectionQuote(text, currentInput));
+    setShowChatPanel(true);
+    setIsComposerExpanded(true);
+    void copyTextToClipboard(text).then((ok) => {
+      flashCopyHint(ok ? '已复制并引用到讨论框' : '复制失败，但已引用到讨论框');
+    });
+  };
+
+  const handleArticleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 2) return;
+    e.preventDefault();
+    rightSelectionStartRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  /** Select article text with the left button or quote it with the right button. */
   const handleTextSelection = (e: React.MouseEvent) => {
-    // Only left button (0); ignore right/middle
-    if (e.button !== 0 && e.nativeEvent.button !== 0) return;
+    const button = e.button ?? e.nativeEvent.button;
+    // Only left-button and right-button selections are meaningful here.
+    if (button !== 0 && button !== 2) return;
+
+    if (button === 2) {
+      const start = rightSelectionStartRef.current;
+      rightSelectionStartRef.current = null;
+      if (!start) return;
+
+      const end = { x: e.clientX, y: e.clientY };
+      if (Math.hypot(end.x - start.x, end.y - start.y) < 4) return;
+      const startRange = getCaretRangeFromPoint(start.x, start.y);
+      const endRange = getCaretRangeFromPoint(end.x, end.y);
+      if (!startRange || !endRange || !contentRef.current) return;
+      if (
+        !contentRef.current.contains(startRange.commonAncestorContainer)
+        || !contentRef.current.contains(endRange.commonAncestorContainer)
+      ) return;
+
+      const selection = window.getSelection();
+      if (!selection) return;
+      selection.removeAllRanges();
+      selection.setBaseAndExtent(
+        startRange.startContainer,
+        startRange.startOffset,
+        endRange.startContainer,
+        endRange.startOffset,
+      );
+      const text = selection.toString().trim();
+      if (text.length < 2 || text.length > 4000) return;
+      quoteSelectedText(text);
+      return;
+    }
 
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-
-    // Prefer selection that intersects the article body
-    if (contentRef.current && selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0);
-      if (!contentRef.current.contains(range.commonAncestorContainer)) return;
-    }
+    if (!isArticleSelection(selection)) return;
 
     const text = selection.toString().trim();
     // Ignore pure click noise; require a real selection (phrase/sentence)
     if (text.length < 2 || text.length > 4000) return;
 
-    const range = selection.getRangeAt(0);
-    // First client rect = the line/word the selection starts on (true "above the word").
-    const rect = getSelectionClientRect(range);
-    if (rect.width <= 0 && rect.height <= 0) return;
-
-    setSelectedText(text);
-    setSelectedContext(text);
-    // Drag selection: follow the live Range, not a word node.
-    openSelectionPopover(anchorFromRect(rect), null);
+    void openWordCard(text, text);
 
     void copyTextToClipboard(text).then((ok) => {
       if (ok) flashCopyHint('已复制到剪贴板');
     });
   };
 
-  const handleExplainGrammar = async () => {
-    if (!selectedText) return;
-    clearSelectionPopover();
-    setIsExplaining(true);
-    setGrammarResult(null);
-    onGrammarQuery?.(selectedText);
-
-    try {
-      const response = await postTutor<GrammarExplanation>({
-        intent: 'explain',
-        articleId: article.id,
-        selectedText,
-        contextSentence: selectedContext,
-      });
-      setGrammarResult(response.result);
-    } catch {
-      setGrammarResult({
-        wordOrPhrase: selectedText,
-        type: 'Vocabulary',
-        phonetic: '',
-        definition: `Context meaning of "${selectedText}" in the current article (offline fallback).`,
-        definitionChinese: '当前为离线释义，请结合上下文理解。',
-        chineseTranslation: selectedText,
-        grammarRules: [
-          'Look at the surrounding words to infer part of speech.',
-          'Try reusing this word in the discussion box below.',
-        ],
-        exampleSentences: [selectedContext || `I learned the word "${selectedText}" today.`],
-      });
-    } finally {
-      setIsExplaining(false);
-    }
+  const handleArticleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Right-drag is the article's quote gesture, so do not open the browser menu.
+    e.preventDefault();
   };
 
-  /** Look up a related word from the dictionary panel (word-family chips). */
-  const handleExplainWord = async (word: string) => {
-    setIsExplaining(true);
-    setGrammarResult(null);
-    onGrammarQuery?.(word);
-    try {
-      const response = await postTutor<GrammarExplanation>({
-        intent: 'explain',
-        articleId: article.id,
-        selectedText: word,
-        contextSentence: '',
-      });
-      setGrammarResult(response.result);
-    } catch {
-      setGrammarResult(null);
-    } finally {
-      setIsExplaining(false);
-    }
+  /** Look up a related word from the word-card panel (word-family chips). */
+  const handleExplainWord = (word: string) => {
+    void openWordCard(word, selectedContext || '');
   };
 
   const handleTranslate = async () => {
-    if (!selectedText) return;
-    clearSelectionPopover();
+    const text = selectedText || grammarResult?.wordOrPhrase;
+    if (!text) return;
     setIsTranslating(true);
     setTranslationResult(null);
 
@@ -664,13 +579,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       const response = await postTutor<TranslationResult>({
         intent: 'translate',
         articleId: article.id,
-        selectedText,
+        selectedText: text,
         targetLanguage: 'Chinese',
       });
       setTranslationResult(response.result);
     } catch {
       setTranslationResult({
-        originalText: selectedText,
+        originalText: text,
         translatedText: '当前为离线模式，请配置 API Key 后重试。',
         targetLanguage: 'Chinese',
       });
@@ -922,10 +837,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     <PenLine className="w-4 h-4 text-[#C35E37]" />
                   </button>
                   {showRewriteLevels && !isRewriting && (
-                    <div className="px-2 pb-2 grid grid-cols-4 gap-1">
+                    <div className="px-2 pb-2 grid grid-cols-3 gap-1">
                       {REWRITE_CEFR_LEVELS.map((lv) => {
                         const current = (article.levelRating?.level || article.level || '').toUpperCase();
                         const isCurrent = current === lv;
+                        const isPreferred =
+                          Boolean(preferredCefrLevel)
+                          && preferredCefrLevel.toUpperCase() === lv;
                         return (
                           <button
                             key={lv}
@@ -935,14 +853,23 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                               setShowMenu(false);
                               onRewriteAtLevel(lv);
                             }}
-                            className={`py-1.5 rounded-lg text-center font-semibold border transition-colors ${
-                              isCurrent
-                                ? 'border-[#C35E37] bg-[#C35E37]/10 text-[#C35E37]'
-                                : 'border-[#E0DBCF] bg-white hover:border-[#C35E37] text-[#3D372E]'
+                            className={`py-1.5 rounded-lg text-center text-[11px] font-semibold border transition-colors ${
+                              isPreferred
+                                ? 'border-[#C35E37] bg-[#C35E37] text-white'
+                                : isCurrent
+                                  ? 'border-[#C35E37] bg-[#C35E37]/10 text-[#C35E37]'
+                                  : 'border-[#E0DBCF] bg-white hover:border-[#C35E37] text-[#3D372E]'
                             }`}
-                            title={isCurrent ? `当前约 ${lv}，仍可生成新版本` : `生成 CEFR ${lv} 新版本`}
+                            title={
+                              isPreferred
+                                ? `你的测试等级 ${lv}（推荐）`
+                                : isCurrent
+                                  ? `当前约 ${lv}，仍可生成新版本`
+                                  : `生成 CEFR ${lv} 新版本`
+                            }
                           >
                             {lv}
+                            {isPreferred ? ' ·你' : ''}
                           </button>
                         );
                       })}
@@ -1068,7 +995,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         )}
         <div
           ref={contentRef}
+          onMouseDown={handleArticleMouseDown}
           onMouseUp={handleTextSelection}
+          onContextMenu={handleArticleContextMenu}
           className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
         >
           {article.content.map((paragraph, pIdx) => {
@@ -1152,244 +1081,25 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      {/* Portal to body: root uses translate-x which breaks position:fixed coords when scrolled. */}
-      {popoverPos
-        && selectedText
-        && createPortal(
-          <div
-            ref={selectionPopoverRef}
-            role="toolbar"
-            aria-label="Selection actions"
-            style={{
-              position: 'fixed',
-              left: popoverPos.x,
-              top: popoverPos.y,
-              transform: 'translateX(-50%)',
-              zIndex: 60,
-            }}
-            className="bg-white/95 backdrop-blur-md border border-[#E0DBCF] shadow-lg rounded-xl p-1.5 flex items-center gap-1 text-xs font-sans whitespace-nowrap"
-          >
-            <button
-              type="button"
-              onClick={handleExplainGrammar}
-              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-            >
-              <BookOpen className="w-3.5 h-3.5 text-[#C35E37]" />
-              <span>Explain</span>
-            </button>
-            <div className="w-[1px] h-4 bg-[#E5DFD3]" />
-            <button
-              type="button"
-              onClick={handleTranslate}
-              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-            >
-              <Globe className="w-3.5 h-3.5 text-[#2563EB]" />
-              <span>Translate</span>
-            </button>
-            <div className="w-[1px] h-4 bg-[#E5DFD3]" />
-            <button
-              type="button"
-              onClick={() => {
-                void copyTextToClipboard(selectedText).then((ok) => {
-                  flashCopyHint(ok ? '已复制到剪贴板' : '复制失败');
-                });
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#F5F2EA] text-[#332E27] font-medium rounded-lg transition-colors"
-              title="Copy selection"
-            >
-              <Copy className="w-3.5 h-3.5 text-[#5B544C]" />
-              <span>Copy</span>
-            </button>
-            <button
-              type="button"
-              onClick={clearSelectionPopover}
-              className="p-1 hover:bg-[#F5F2EA] rounded-md text-[#888]"
-              aria-label="Close"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>,
-          document.body,
-        )}
-
-      {/* Keep fixed dialogs outside the translated reading root so they stay in the viewport on scroll. */}
-      {(isExplaining || grammarResult) && createPortal(
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-6 relative max-h-[85vh] overflow-y-auto">
-            <button
-              onClick={() => {
-                setGrammarResult(null);
-                setIsExplaining(false);
-              }}
-              className="absolute top-4 right-4 p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {isExplaining ? (
-              <div className="py-12 text-center space-y-4">
-                <Sparkles className="w-8 h-8 text-[#C35E37] animate-spin mx-auto" />
-                <p className="font-serif text-lg text-[#332E28]">Analyzing with English AI...</p>
-              </div>
-            ) : grammarResult ? (
-              <div className="space-y-4 text-left">
-                <div className="flex items-start justify-between gap-3 border-b border-[#E8E2D5] pb-3 pr-12">
-                  <div>
-                    <h3 className="font-serif text-3xl font-bold text-[#2A2621]">
-                      {grammarResult.wordOrPhrase}
-                    </h3>
-                    <div className="flex items-center flex-wrap gap-2 mt-1.5">
-                      {grammarResult.phonetic && (
-                        <span className="text-xs font-mono text-[#78716C] bg-[#EFECE3] px-2 py-0.5 rounded border border-[#E0DBCF]">
-                          {grammarResult.phonetic}
-                        </span>
-                      )}
-                      <span className="px-2.5 py-0.5 bg-[#FDF2EE] text-[#C35E37] border border-[#FADCD1] rounded-md text-xs font-medium">
-                        {grammarResult.type}
-                      </span>
-                      {grammarResult.cefrLevel && (
-                        <span className="px-2 py-0.5 bg-[#EEF4FF] text-[#1D4ED8] border border-[#BFDBFE] rounded-md text-xs font-semibold">
-                          {grammarResult.cefrLevel}
-                        </span>
-                      )}
-                      {grammarResult.tags?.map((tag) => (
-                        <span
-                          key={tag}
-                          className="px-2 py-0.5 bg-[#F3F0EA] text-[#6B6355] border border-[#E0DACE] rounded-md text-[11px] font-medium"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                      {grammarResult.source === 'dictionary' && (
-                        <span className="px-2 py-0.5 bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] rounded-md text-[11px] font-medium">
-                          本地词典
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleSpeakText(grammarResult.wordOrPhrase)}
-                    className="shrink-0 p-2.5 bg-[#EFEAE0] hover:bg-[#E3DCCF] rounded-full text-[#332E28] transition-colors"
-                  >
-                    <Volume2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {grammarResult.chineseTranslation && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block">
-                      单词汉译
-                    </span>
-                    <p className="text-sm font-semibold text-[#92400E] bg-[#FEF3C7] px-3 py-1.5 rounded-lg border border-[#FDE68A] mt-1 inline-block">
-                      {grammarResult.chineseTranslation}
-                    </p>
-                  </div>
-                )}
-
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                    English definition
-                  </span>
-                  <div className="p-3 bg-[#F5F2EA] rounded-xl border border-[#E7E1D4] space-y-1.5">
-                    {grammarResult.senses?.length ? (
-                      <ol className="space-y-2">
-                        {grammarResult.senses.map((sense, idx) => (
-                          <li key={idx} className="text-sm leading-relaxed">
-                            <span className="font-semibold text-[#7A7166] mr-1.5">
-                              {idx + 1}.{sense.partOfSpeech ? ` ${sense.partOfSpeech}` : ''}
-                            </span>
-                            <span className="text-[#2E2A25] font-medium">{sense.definition}</span>
-                            {sense.definitionZh && (
-                              <span className="block text-xs text-[#065F46] mt-0.5">
-                                {sense.definitionZh}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="text-sm text-[#2E2A25] font-medium leading-relaxed">
-                        {grammarResult.definition}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {grammarResult.grammarRules?.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                      语法与搭配
-                    </span>
-                    <ul className="list-disc list-inside text-xs text-[#38332D] space-y-1 bg-white p-3 rounded-xl border border-[#E5DFD1]">
-                      {grammarResult.grammarRules.map((rule, idx) => (
-                        <li key={idx}>{rule}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {grammarResult.exchanges && grammarResult.exchanges.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                      词形变化
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {grammarResult.exchanges.map((exchange, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-1 bg-white border border-[#E5DFD1] rounded-lg text-xs text-[#4A443B]"
-                        >
-                          <span className="text-[#9C9388]">{exchange.label}</span> {exchange.value}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {grammarResult.collocations && grammarResult.collocations.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                      常见搭配
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {grammarResult.collocations.map((collocation, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-1 bg-[#FDF6EC] border border-[#F3E3C3] rounded-lg text-xs text-[#7C4A03]"
-                        >
-                          {collocation.en}
-                          {collocation.zh ? ` ${collocation.zh}` : ''}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {grammarResult.relatedWords && grammarResult.relatedWords.length > 0 && (
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#9C9388] block mb-1">
-                      同族词
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {grammarResult.relatedWords.map((related) => (
-                        <button
-                          key={related}
-                          onClick={() => handleExplainWord(related)}
-                          className="px-2 py-1 bg-[#EEF2FF] hover:bg-[#E0E7FF] border border-[#C7D2FE] rounded-lg text-xs text-[#3730A3] transition-colors"
-                        >
-                          {related}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            ) : null}
-          </div>
-        </div>,
-        document.body,
-      )}
+      <WordCardPanel
+        open={wordCardOpen}
+        loading={isExplaining}
+        result={grammarResult}
+        selectedText={selectedText}
+        onClose={closeWordCard}
+        onSpeak={handleSpeakText}
+        onLookupRelated={handleExplainWord}
+        onTranslate={() => {
+          void handleTranslate();
+        }}
+        onCopy={() => {
+          const text = selectedText || grammarResult?.wordOrPhrase || '';
+          if (!text) return;
+          void copyTextToClipboard(text).then((ok) => {
+            flashCopyHint(ok ? '已复制到剪贴板' : '复制失败');
+          });
+        }}
+      />
 
       {(isTranslating || translationResult) && createPortal(
         <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -1434,7 +1144,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         document.body,
       )}
 
-      {showChatPanel && (
+      {showChatPanel && !isComposerExpanded && (
         <div className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-8 sm:w-96 bg-[#FAF8F3] border border-[#E0DBCF] rounded-2xl shadow-2xl p-4 z-40 max-h-96 flex flex-col">
           <div className="flex items-center justify-between border-b border-[#E8E2D5] pb-2 mb-3">
             <div className="min-w-0">
@@ -1456,7 +1166,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           <div className="flex-1 overflow-y-auto space-y-3 p-1 text-xs">
             {chatMessages.map((msg, idx) => (
               <div
-                key={idx}
+                key={msg.id ?? idx}
                 className={`p-3 rounded-xl max-w-[85%] ${
                   msg.sender === 'user'
                     ? 'bg-[#C35E37] text-white ml-auto'
@@ -1476,42 +1186,35 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       )}
 
       {isComposerExpanded ? (
-        <footer className="fixed bottom-4 left-4 right-4 z-40 sm:left-auto sm:right-8 sm:w-[min(42rem,calc(100vw-4rem))]">
-          <div className="flex items-center gap-1.5 rounded-2xl border border-[#DDD6C8] bg-[#F8F6F0]/95 p-2 shadow-xl backdrop-blur-md">
-          <button
-            type="button"
-            onClick={() => {
-              // Discussion stays text/Socratic; real voice lives in Oral Practice (StepAudio)
-              setShowChatPanel(true);
-              setUserInput((prev) =>
-                prev.trim()
-                  ? prev
-                  : ''
-              );
-              // Soft hint in chat instead of alert
-              setChatMessages((prev) => {
-                if (prev.some((m) => m.id === 'hint-voice-oral')) return prev;
-                return [
-                  ...prev,
-                  {
-                    id: 'hint-voice-oral',
-                    sender: 'ai',
-                    text: '语音陪练请回首页打开「纯口语陪练」→「实时语音（StepAudio）」。讨论区用于就文答疑（文字）。',
-                    timestamp: new Date().toISOString(),
-                  },
-                ];
-              });
-            }}
-            className="shrink-0 rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
-            aria-label="Open voice practice guidance"
-            title="Voice: use Oral Practice · StepAudio"
-          >
-            <Mic className="w-5 h-5" />
-          </button>
-
+        <footer className="fixed right-4 top-1/2 z-40 w-[min(28rem,calc(100vw-2rem))] -translate-y-1/2 sm:right-8">
+          <div className="flex max-h-[min(34rem,calc(100vh-2rem))] flex-col gap-1.5 overflow-hidden rounded-2xl border border-[#DDD6C8] bg-[#F8F6F0]/98 p-3 shadow-2xl backdrop-blur-md">
+          <div className="min-h-0 max-h-56 w-full space-y-3 overflow-y-auto p-1 text-xs">
+            {chatMessages.length === 0 && !isSending && (
+              <p className="rounded-xl border border-dashed border-[#DDD6C8] bg-white/60 p-3 text-[#756D63]">
+                Start with a question about a sentence, idea, or vocabulary in this article.
+              </p>
+            )}
+            {chatMessages.map((msg, idx) => (
+              <div
+                key={msg.id ?? idx}
+                className={`max-w-[85%] rounded-xl p-3 ${
+                  msg.sender === 'user'
+                    ? 'ml-auto bg-[#C35E37] text-white'
+                    : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
+                }`}
+              >
+                {msg.text}
+              </div>
+            ))}
+            {isSending && (
+              <div className="mr-auto animate-pulse rounded-xl bg-[#EFECE3] p-3 text-[#6C655C]">
+                Thinking...
+              </div>
+            )}
+          </div>
           <form
             onSubmit={handleSendQuestion}
-            className="flex min-w-0 flex-1 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
+            className="flex w-full shrink-0 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
             aria-label="Article discussion"
           >
             <input
@@ -1521,7 +1224,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') setIsComposerExpanded(false);
+                if (e.key === 'Escape') {
+                  setIsComposerExpanded(false);
+                  setShowChatPanel(false);
+                }
               }}
               placeholder="问大意、难句，或谈谈你的观点…"
               aria-label="Ask about this article"
@@ -1539,8 +1245,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsComposerExpanded(false)}
-            className="shrink-0 rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+            onClick={() => {
+              setIsComposerExpanded(false);
+              setShowChatPanel(false);
+            }}
+            className="shrink-0 self-end rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
             aria-label="Collapse article discussion input"
             title="Collapse input"
           >
@@ -1550,17 +1259,20 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       </footer>
       ) : (
-        <button
-          type="button"
-          onClick={() => setIsComposerExpanded(true)}
-          className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 sm:right-8"
-          aria-label="Open article discussion input"
-          aria-expanded={false}
-          aria-controls="reading-composer-input"
-          title="Ask about this article"
-        >
-          <MessageCircle className="h-6 w-6" />
-        </button>
+        createPortal(
+          <button
+            type="button"
+            onClick={() => setIsComposerExpanded(true)}
+            className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 sm:right-8"
+            aria-label="Open article discussion input"
+            aria-expanded={false}
+            aria-controls="reading-composer-input"
+            title="Ask about this article"
+          >
+            <MessageCircle className="h-6 w-6" />
+          </button>,
+          document.body,
+        )
       )}
     </div>
   );

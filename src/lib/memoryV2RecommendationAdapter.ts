@@ -9,6 +9,7 @@ import {
   RecommendationEngine,
   ArticleCandidate,
   RecommendationScore,
+  countUniqueReviewHits,
   scheduleReviewArticles,
   scoreArticlesForReview,
   diversifyRecommendations,
@@ -16,6 +17,11 @@ import {
 import { memoryV2 } from './memoryV2/hooks';
 import { getNewLemmas } from './readingExposure';
 import type { WordProficiencyView } from './memoryV2/memorySystem';
+import {
+  projectBandsOntoCatalog,
+  type CefrRecommendationProfile,
+} from './userReadingProfile';
+import type { RecommendationParams } from './memoryV2/recommendation';
 
 /**
  * 从文章中提取所有 lemmas
@@ -76,13 +82,22 @@ export interface MemoryV2RecommendationOptions {
    * Preferred for full magazine catalogs (C1 text + sparse personal memory).
    */
   applyHardFilters?: boolean;
+  /** Assessment-derived CEFR profile shared by all recommendation paths. */
+  cefrProfile?: CefrRecommendationProfile;
+  /** Effective catalog bands; computed when omitted. */
+  allowedBands?: import('./articleLevel').CefrBand[];
+  /** Enable the reversible CEFR candidate window for assessed users. */
+  cefrHardFilter?: boolean;
+  /** Minimum candidates required before keeping the CEFR window. */
+  minCandidatesAfterCefrFilter?: number;
 }
 
 /**
  * Memory V2.2 推荐适配器
  */
 export class MemoryV2RecommendationAdapter {
-  private engine: RecommendationEngine;
+  private strategy: RecommendationStrategy;
+  private engineOptions: RecommendationParams;
 
   constructor(options: MemoryV2RecommendationOptions = {}) {
     const {
@@ -93,10 +108,9 @@ export class MemoryV2RecommendationAdapter {
       maxUnknownWordsRatio = 0.3,
     } = options;
 
-    // 根据策略调整权重
+    this.strategy = strategy;
     const weights = this.getStrategyWeights(strategy);
-
-    this.engine = new RecommendationEngine({
+    this.engineOptions = {
       userLevel,
       preferredTopics,
       prioritizeDueWords: weights.prioritizeDueWords,
@@ -105,6 +119,28 @@ export class MemoryV2RecommendationAdapter {
       dueWordsWeight: weights.dueWordsWeight,
       minLearningZoneWords,
       maxUnknownWordsRatio,
+      cefrProfile: options.cefrProfile,
+      allowedBands: options.allowedBands,
+      cefrHardFilter: options.cefrHardFilter,
+      minCandidatesAfterCefrFilter: options.minCandidatesAfterCefrFilter,
+    };
+  }
+
+  private createEngine(options: MemoryV2RecommendationOptions = {}): RecommendationEngine {
+    const strategy = options.strategy ?? this.strategy;
+    const weights = this.getStrategyWeights(strategy);
+    return new RecommendationEngine({
+      ...this.engineOptions,
+      ...weights,
+      userLevel: options.userLevel ?? this.engineOptions.userLevel,
+      preferredTopics: options.preferredTopics ?? this.engineOptions.preferredTopics,
+      minLearningZoneWords: options.minLearningZoneWords ?? this.engineOptions.minLearningZoneWords,
+      maxUnknownWordsRatio: options.maxUnknownWordsRatio ?? this.engineOptions.maxUnknownWordsRatio,
+      cefrProfile: options.cefrProfile ?? this.engineOptions.cefrProfile,
+      allowedBands: options.allowedBands ?? this.engineOptions.allowedBands,
+      cefrHardFilter: options.cefrHardFilter ?? this.engineOptions.cefrHardFilter,
+      minCandidatesAfterCefrFilter:
+        options.minCandidatesAfterCefrFilter ?? this.engineOptions.minCandidatesAfterCefrFilter,
     });
   }
 
@@ -160,6 +196,25 @@ export class MemoryV2RecommendationAdapter {
       applyHardFilters = true,
     } = options;
 
+    const availableLevels = articleCandidates.map(
+      (candidate) => candidate.article.levelRating?.level
+        || candidate.article.level
+        || candidate.article.rewriteTargetLevel
+    );
+    const effectiveBands = options.allowedBands
+      ?? this.engineOptions.allowedBands
+      ?? (this.engineOptions.cefrProfile
+        ? projectBandsOntoCatalog(this.engineOptions.cefrProfile.idealBands, availableLevels)
+        : undefined);
+    const engine = this.createEngine({
+      ...options,
+      allowedBands: effectiveBands,
+      // Local pools use the CEFR window only when the caller keeps hard filters on.
+      cefrHardFilter: applyHardFilters
+        ? options.cefrHardFilter ?? this.engineOptions.cefrHardFilter ?? Boolean(this.engineOptions.cefrProfile?.hasAssessment)
+        : false,
+    });
+
     const userId = memoryV2.getUserId();
     const system = memoryV2.getSystem();
     const allProficiency = await system.getAllWordProficiency(userId);
@@ -168,10 +223,10 @@ export class MemoryV2RecommendationAdapter {
     );
 
     const filtered = applyHardFilters
-      ? this.engine.filterCandidates(articleCandidates, proficiencyMap)
+      ? engine.filterCandidates(articleCandidates, proficiencyMap)
       : articleCandidates.filter((candidate) => candidate.lemmas.length > 0);
 
-    let recommendations = this.engine.recommend(
+    let recommendations = engine.recommend(
       filtered,
       proficiencyMap,
       Math.max(limit * 2, limit)
@@ -287,11 +342,20 @@ export class MemoryV2RecommendationAdapter {
 
     // Hit rate dominates ranking; engine score only breaks ties / fine-tunes.
     const targetIds = priorityWords.map((word) => word.wordId);
+    const availableLevels = articleCandidates.map(
+      (candidate) => candidate.article.levelRating?.level
+        || candidate.article.level
+        || candidate.article.rewriteTargetLevel
+    );
+    const effectiveBands = this.engineOptions.allowedBands
+      ?? (this.engineOptions.cefrProfile
+        ? projectBandsOntoCatalog(this.engineOptions.cefrProfile.idealBands, availableLevels)
+        : undefined);
     return scoreArticlesForReview(
       reviewArticles,
       targetIds,
       proficiencyMap,
-      this.engine,
+      this.createEngine({ allowedBands: effectiveBands, cefrHardFilter: false }),
       limit
     );
   }
@@ -300,17 +364,24 @@ export class MemoryV2RecommendationAdapter {
    * 更新推荐参数
    */
   updateOptions(options: Partial<MemoryV2RecommendationOptions>): void {
+    if (options.strategy) this.strategy = options.strategy;
     if (options.userLevel) {
-      this.engine.updateParams({ userLevel: options.userLevel });
+      this.engineOptions.userLevel = options.userLevel;
     }
     if (options.preferredTopics) {
-      this.engine.updateParams({ preferredTopics: options.preferredTopics });
+      this.engineOptions.preferredTopics = options.preferredTopics;
     }
     if (options.minLearningZoneWords !== undefined) {
-      this.engine.updateParams({ minLearningZoneWords: options.minLearningZoneWords });
+      this.engineOptions.minLearningZoneWords = options.minLearningZoneWords;
     }
     if (options.maxUnknownWordsRatio !== undefined) {
-      this.engine.updateParams({ maxUnknownWordsRatio: options.maxUnknownWordsRatio });
+      this.engineOptions.maxUnknownWordsRatio = options.maxUnknownWordsRatio;
+    }
+    if (options.cefrProfile !== undefined) this.engineOptions.cefrProfile = options.cefrProfile;
+    if (options.allowedBands !== undefined) this.engineOptions.allowedBands = options.allowedBands;
+    if (options.cefrHardFilter !== undefined) this.engineOptions.cefrHardFilter = options.cefrHardFilter;
+    if (options.minCandidatesAfterCefrFilter !== undefined) {
+      this.engineOptions.minCandidatesAfterCefrFilter = options.minCandidatesAfterCefrFilter;
     }
   }
 }
@@ -369,7 +440,7 @@ export async function rankMagazineLemmaCandidates(
     const hitById = new Map<string, number>();
     const withTargets = filtered
       .map((candidate) => {
-        const hit = candidate.lemmas.filter((lemma) => target.has(lemma)).length;
+        const hit = countUniqueReviewHits(candidate.lemmas, target);
         hitById.set(candidate.article.id, hit);
         return { candidate, hit };
       })

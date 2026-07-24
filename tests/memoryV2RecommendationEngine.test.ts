@@ -8,14 +8,15 @@ import {
   scheduleReviewArticles,
   type ArticleCandidate,
 } from '../src/lib/memoryV2/recommendation';
+import { buildCefrRecommendationProfile } from '../src/lib/userReadingProfile';
 
-function candidate(id: string, lemmas: string[]): ArticleCandidate {
+function candidate(id: string, lemmas: string[], level = 'B1'): ArticleCandidate {
   return {
     article: {
       id,
       title: id,
       content: [lemmas.join(' ')],
-      level: 'B1',
+      level,
       topic: 'general',
     },
     lemmas,
@@ -231,6 +232,114 @@ describe('review hit-rate ranking', () => {
     assert.deepEqual(
       ranked.map((item) => item.article.id),
       ['hit']
+    );
+  });
+
+  it('uses CEFR as the tie-breaker when review hit counts are equal', () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B2',
+      inferredBand: 'B2',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const engine = new RecommendationEngine({
+      userLevel: 'B2',
+      cefrProfile: profile,
+    });
+    const target = proficiency('target', 1, '2020-01-01T00:00:00.000Z');
+    const scored = engine.recommend(
+      [
+        candidate('c1-hit', ['target', 'filler'], 'C1'),
+        candidate('b2-hit', ['target', 'filler'], 'B2'),
+      ],
+      new Map([['target', target]]),
+      2
+    );
+
+    assert.deepEqual(scored.map((item) => item.articleId), ['b2-hit', 'c1-hit']);
+    assert.ok((scored[0]?.cefrScore ?? 0) > (scored[1]?.cefrScore ?? 0));
+  });
+
+  it('gives a measurable CEFR signal at cold start and penalizes far-higher text', () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B1',
+      inferredBand: 'B1',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const engine = new RecommendationEngine({
+      userLevel: 'B1',
+      cefrProfile: profile,
+    });
+    const ranked = engine.recommend(
+      [
+        candidate('exact', ['alpha'], 'B1'),
+        candidate('far-higher', ['beta'], 'C1'),
+      ],
+      new Map(),
+      2
+    );
+
+    assert.equal(ranked[0]?.articleId, 'exact');
+    assert.ok((ranked[0]?.score ?? 0) - (ranked[1]?.score ?? 0) >= 5);
+  });
+
+  it('applies a CEFR hard window only when enough eligible candidates remain', () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B1',
+      inferredBand: 'B1',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const engine = new RecommendationEngine({
+      cefrProfile: profile,
+      allowedBands: ['B2'],
+      cefrHardFilter: true,
+      minCandidatesAfterCefrFilter: 2,
+    });
+    const eligible = [
+      candidate('b2-1', ['a'], 'B2'),
+      candidate('b2-2', ['b'], 'B2'),
+      candidate('c1-1', ['c'], 'C1'),
+    ];
+    assert.deepEqual(
+      engine.filterCandidates(eligible, new Map()).map((item) => item.article.id),
+      ['b2-1', 'b2-2']
+    );
+
+    const sparse = [
+      candidate('b2-only', ['a'], 'B2'),
+      candidate('c1-1', ['b'], 'C1'),
+      candidate('c1-2', ['c'], 'C1'),
+    ];
+    assert.deepEqual(engine.filterCandidates(sparse, new Map()), sparse);
+  });
+
+  it('keeps protected review-hit candidates outside the CEFR window', () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B1',
+      inferredBand: 'B1',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const engine = new RecommendationEngine({
+      cefrProfile: profile,
+      allowedBands: ['B2'],
+      cefrHardFilter: true,
+      minCandidatesAfterCefrFilter: 1,
+    });
+    const review = candidate('review-c1', ['target'], 'C1');
+    const normal = candidate('normal-b2', ['other'], 'B2');
+
+    assert.deepEqual(
+      engine.filterCandidates([review, normal], new Map(), {
+        protectedArticleIds: new Set(['review-c1']),
+      }).map((item) => item.article.id),
+      ['review-c1', 'normal-b2']
     );
   });
 });

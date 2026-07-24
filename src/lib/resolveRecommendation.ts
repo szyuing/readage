@@ -117,7 +117,11 @@ export function pickDailyRankedRecommendation(
   exploreTop = 24
 ): RecommendationScore | null {
   if (scores.length === 0) return null;
-  const head = scores.slice(0, Math.max(1, exploreTop));
+  const topScore = scores[0]?.score;
+  if (topScore === undefined) return null;
+  const head = scores
+    .slice(0, Math.max(1, exploreTop))
+    .filter((candidate) => candidate.score === topScore);
   const shuffled = seededShuffle(head, `full-catalog-explore:${rotationDate}`);
   return shuffled[0] ?? scores[0] ?? null;
 }

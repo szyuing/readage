@@ -23,6 +23,7 @@ test('accepts a known tutor intent and bounds discussion history', () => {
 
 test('rejects removed writing intent, unknown intents, and oversized fields', () => {
   assert.equal(validateTutorRequest({ intent: 'writing_feedback' }).ok, false);
+  assert.equal(validateTutorRequest({ intent: 'oral_feedback' }).ok, false);
   assert.equal(validateTutorRequest({ intent: 'delete_everything' }).ok, false);
   const result = validateTutorRequest({ intent: 'explain', selectedText: 'x'.repeat(2001) });
   assert.equal(result.ok, false);

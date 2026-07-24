@@ -8,6 +8,7 @@ import {
   MagazineSyncStatus,
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
+import { getArticleCefrLevel } from '../lib/articleLevel';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -20,6 +21,9 @@ type MagLayer = 'sources' | 'issues' | 'articles';
 interface LibraryScreenProps {
   /** User-pasted articles (「我的文章」tab). */
   userArticles: Article[];
+  /** From English test — default CEFR chip when assessed. */
+  userCefrLevel?: string;
+  hasAssessment?: boolean;
   onSelectArticle: (article: Article) => void | Promise<void>;
   onInsertArticle: () => void;
   onBack: () => void;
@@ -27,12 +31,18 @@ interface LibraryScreenProps {
 
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   userArticles,
+  userCefrLevel,
+  hasAssessment = false,
   onSelectArticle,
   onInsertArticle,
   onBack,
 }) => {
   const [tab, setTab] = useState<LibraryTab>('magazines');
-  const [levelFilter, setLevelFilter] = useState<string>('All');
+  const [levelFilter, setLevelFilter] = useState<string>(() =>
+    hasAssessment && userCefrLevel && (CEFR_LEVELS as readonly string[]).includes(userCefrLevel)
+      ? userCefrLevel
+      : 'All'
+  );
   const [topicQuery, setTopicQuery] = useState('');
 
   const [sources, setSources] = useState<MagazineSourceSummary[]>([]);
@@ -62,7 +72,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   const filteredMine = useMemo(() => {
     return userArticles.filter((a) => {
-      if (levelFilter !== 'All' && a.level !== levelFilter) return false;
+      if (levelFilter !== 'All' && getArticleCefrLevel(a) !== levelFilter) return false;
       if (!topicQuery.trim()) return true;
       const q = topicQuery.toLowerCase();
       return (
@@ -307,17 +317,6 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         ? activeSource.displayName
         : '文章库';
 
-  const headerSubtitle = (() => {
-    if (tab === 'mine') return '我粘贴添加的文章';
-    if (magLayer === 'articles') {
-      return `${issueArticles.length} 篇文章 · 第 3 层 · 选一篇进入学习`;
-    }
-    if (magLayer === 'issues') {
-      return `${filteredIssues.length} 个期号 · 第 2 层 · 选择期号`;
-    }
-    return '杂志 → 期号 → 文章 · 三层浏览';
-  })();
-
   const searchPlaceholder =
     tab === 'mine'
       ? '搜索我的文章…'
@@ -345,7 +344,6 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           <h1 className="font-serif text-2xl font-normal text-[#2C2723] truncate">
             {headerTitle}
           </h1>
-          <p className="text-[11px] text-[#8C8478]">{headerSubtitle}</p>
         </div>
         {tab === 'magazines' && magLayer !== 'sources' && (
           <div className="hidden sm:flex items-center gap-1 text-[10px] text-[#9A9286] shrink-0">
@@ -398,20 +396,34 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
           )}
 
           {showCefr && (
-            <div className="flex flex-wrap gap-2">
-              {CEFR_LEVELS.map((lv) => (
-                <button
-                  key={lv}
-                  onClick={() => setLevelFilter(lv)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                    levelFilter === lv
-                      ? 'bg-[#C35E37] text-white'
-                      : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
-                  }`}
-                >
-                  {lv}
-                </button>
-              ))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                {CEFR_LEVELS.map((lv) => (
+                  <button
+                    key={lv}
+                    type="button"
+                    onClick={() => setLevelFilter(lv)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      levelFilter === lv
+                        ? 'bg-[#C35E37] text-white'
+                        : 'bg-[#EFECE3] text-[#5B544C] hover:bg-[#E2DDD0]'
+                    }`}
+                    title={
+                      hasAssessment && userCefrLevel && lv === userCefrLevel
+                        ? `你的英语测试等级 ${userCefrLevel}`
+                        : undefined
+                    }
+                  >
+                    {lv}
+                    {hasAssessment && userCefrLevel && lv === userCefrLevel ? ' · 你的' : ''}
+                  </button>
+                ))}
+              </div>
+              {hasAssessment && userCefrLevel && (
+                <p className="text-[11px] text-[#8C8478]">
+                  默认按英语测试结果筛选 {userCefrLevel}；可点 All 查看全部。
+                </p>
+              )}
             </div>
           )}
 
