@@ -6,7 +6,6 @@
 import { WordProficiencyView } from './memorySystem';
 import {
   buildCefrRecommendationProfile,
-  cefrBandDistance,
   getCefrRelation,
   projectBandsOntoCatalog,
   resolveUserCefrLevel,
@@ -80,6 +79,8 @@ export interface RecommendationParams {
   coldStartBaseScore?: number;
   /** Shared assessment-derived CEFR profile. */
   cefrProfile?: CefrRecommendationProfile;
+  /** Explicit CEFR weight override for callers without a full profile. */
+  cefrWeight?: number;
   /** Effective catalog bands after projecting the ideal user window. */
   allowedBands?: CefrBand[];
   /** Apply a reversible CEFR candidate window when assessment data exists. */
@@ -100,6 +101,7 @@ type ResolvedRecommendationParams = {
   minProficiencyCoverage: number;
   coldStartBaseScore: number;
   cefrProfile?: CefrRecommendationProfile;
+  cefrWeight?: number;
   allowedBands?: CefrBand[];
   cefrHardFilter: boolean;
   minCandidatesAfterCefrFilter: number;
@@ -171,11 +173,14 @@ export class RecommendationEngine {
   }
 
   private getCefrProfile(): CefrRecommendationProfile {
-    return this.params.cefrProfile
+    const profile = this.params.cefrProfile
       ?? buildCefrRecommendationProfile(
         null,
         resolveUserCefrLevel({ recommendedBand: this.params.userLevel })
       );
+    return this.params.cefrWeight === undefined
+      ? profile
+      : { ...profile, cefrWeight: this.params.cefrWeight };
   }
 
   private articleLevel(candidate: ArticleCandidate): string {
