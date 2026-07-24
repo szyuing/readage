@@ -474,22 +474,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     window.setTimeout(() => setCopyHint(null), 1600);
   };
 
-  const getCaretRangeFromPoint = (x: number, y: number): Range | null => {
-    const documentWithCaret = document as Document & {
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-      caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null;
-    };
-    if (documentWithCaret.caretRangeFromPoint) {
-      return documentWithCaret.caretRangeFromPoint(x, y);
-    }
-    const position = documentWithCaret.caretPositionFromPoint?.(x, y);
-    if (!position) return null;
-    const range = document.createRange();
-    range.setStart(position.offsetNode, position.offset);
-    range.collapse(true);
-    return range;
-  };
-
   const isArticleSelection = (selection: Selection | null): selection is Selection => {
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
     if (!contentRef.current) return false;
@@ -505,47 +489,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     });
   };
 
-  const handleArticleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 2) return;
-    e.preventDefault();
-    rightSelectionStartRef.current = { x: e.clientX, y: e.clientY };
-  };
-
-  /** Select article text with the left button or quote it with the right button. */
+  /** Left-button drag selection copies the source text and quotes it in discussion. */
   const handleTextSelection = (e: React.MouseEvent) => {
     const button = e.button ?? e.nativeEvent.button;
-    // Only left-button and right-button selections are meaningful here.
-    if (button !== 0 && button !== 2) return;
-
-    if (button === 2) {
-      const start = rightSelectionStartRef.current;
-      rightSelectionStartRef.current = null;
-      if (!start) return;
-
-      const end = { x: e.clientX, y: e.clientY };
-      if (Math.hypot(end.x - start.x, end.y - start.y) < 4) return;
-      const startRange = getCaretRangeFromPoint(start.x, start.y);
-      const endRange = getCaretRangeFromPoint(end.x, end.y);
-      if (!startRange || !endRange || !contentRef.current) return;
-      if (
-        !contentRef.current.contains(startRange.commonAncestorContainer)
-        || !contentRef.current.contains(endRange.commonAncestorContainer)
-      ) return;
-
-      const selection = window.getSelection();
-      if (!selection) return;
-      selection.removeAllRanges();
-      selection.setBaseAndExtent(
-        startRange.startContainer,
-        startRange.startOffset,
-        endRange.startContainer,
-        endRange.startOffset,
-      );
-      const text = selection.toString().trim();
-      if (text.length < 2 || text.length > 4000) return;
-      quoteSelectedText(text);
-      return;
-    }
+    if (button !== 0) return;
 
     const selection = window.getSelection();
     if (!isArticleSelection(selection)) return;
@@ -554,21 +501,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     // Ignore pure click noise; require a real selection (phrase/sentence)
     if (text.length < 2 || text.length > 4000) return;
 
-    void copyTextToClipboard(text).then((ok) => {
-      if (ok) flashCopyHint('已复制到剪贴板');
-    });
-  };
-
-  const handleArticleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Right-drag is the article's quote gesture, so do not open the browser menu.
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleArticleAuxClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 2) return;
-    e.preventDefault();
-    e.stopPropagation();
+    quoteSelectedText(text);
   };
 
   /** Look up a related word from the word-card panel (word-family chips). */
@@ -1002,11 +935,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         )}
         <div
           ref={contentRef}
-          onMouseDown={handleArticleMouseDown}
           onMouseUp={handleTextSelection}
-          onContextMenuCapture={handleArticleContextMenu}
-          onContextMenu={handleArticleContextMenu}
-          onAuxClickCapture={handleArticleAuxClick}
           className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
         >
           {article.content.map((paragraph, pIdx) => {
