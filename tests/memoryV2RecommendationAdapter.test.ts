@@ -5,8 +5,10 @@ import type { WordProficiencyView } from '../src/lib/memoryV2/memorySystem';
 import {
   createMemoryV2Adapter,
   memoryV2RecommendationProvider,
+  rankMagazineLemmaCandidates,
 } from '../src/lib/memoryV2RecommendationAdapter';
 import { memoryV2 } from '../src/lib/memoryV2/hooks';
+import type { ArticleCandidate } from '../src/lib/memoryV2/recommendation';
 
 const originalGetSystem = memoryV2.getSystem;
 const originalGetUserId = memoryV2.getUserId;
@@ -64,6 +66,60 @@ afterEach(() => {
 });
 
 describe('MemoryV2RecommendationAdapter targeted review', () => {
+  it('uses the assessed CEFR profile for local ranking', async () => {
+    installMemorySystemStub({ dueWords: [], allProficiency: [] });
+
+    const selected = await memoryV2RecommendationProvider(
+      { topic: '', reviewWords: [], excludeArticleIds: [] },
+      [
+        { ...article('c1-article', 'c1'), level: 'C1' },
+        { ...article('b2-article', 'b2'), level: 'B2' },
+      ],
+      {
+        cefrProfile: {
+          userLevel: 'B1',
+          hasAssessment: true,
+          confidence: 'high',
+          idealBands: ['B1', 'B2'],
+          stretchBand: 'B2',
+          cefrWeight: 1.3,
+          preferShorter: true,
+        },
+      }
+    );
+
+    assert.equal(selected?.id, 'b2-article');
+  });
+
+  it('uses unique review hits in the full catalog path', async () => {
+    installMemorySystemStub({ dueWords: [], allProficiency: [] });
+
+    const spam: ArticleCandidate = {
+      article: article('spam', 'alpha'),
+      lemmas: ['alpha', 'alpha', 'alpha', 'alpha'],
+    };
+    const coverage: ArticleCandidate = {
+      article: article('coverage', 'alpha'),
+      lemmas: ['alpha', 'beta'],
+    };
+
+    const ranked = await rankMagazineLemmaCandidates([spam, coverage], {
+      reviewWords: ['alpha', 'beta'],
+      cefrProfile: {
+        userLevel: 'B1',
+        hasAssessment: true,
+        confidence: 'high',
+        idealBands: ['B1', 'B2'],
+        stretchBand: 'B2',
+        cefrWeight: 1.3,
+        preferShorter: true,
+      },
+      limit: 2,
+    });
+
+    assert.deepEqual(ranked.map((item) => item.articleId), ['coverage', 'spam']);
+  });
+
   it('provider prioritizes the requested reviewWords instead of the system due words', async () => {
     let dueWordQueries = 0;
     installMemorySystemStub({

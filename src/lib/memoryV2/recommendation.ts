@@ -10,6 +10,7 @@ import {
   getCefrRelation,
   projectBandsOntoCatalog,
   resolveUserCefrLevel,
+  suggestedWordCountRange,
   type CefrRecommendationProfile,
   type CefrRelation,
 } from '../userReadingProfile';
@@ -358,9 +359,24 @@ export class RecommendationEngine {
       score *= 1.5;
     }
 
+    let wordCountScore = 0;
+    const profile = this.getCefrProfile();
+    if (
+      profile.preferShorter
+      && isGlobalColdStart(proficiencyMap, params)
+      && typeof article.estimatedWordCount === 'number'
+    ) {
+      const range = suggestedWordCountRange(profile.userLevel);
+      if (article.estimatedWordCount <= range.max * 1.5) {
+        wordCountScore = 1;
+      } else if (article.estimatedWordCount > range.max * 3) {
+        wordCountScore = -2;
+      }
+    }
+
     if (!reason) reason = personalized ? '接近当前水平' : '冷启动推荐';
 
-    score += cefr.score;
+    score += cefr.score + wordCountScore;
 
     return {
       articleId: article.id,

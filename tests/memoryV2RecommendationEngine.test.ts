@@ -286,6 +286,27 @@ describe('review hit-rate ranking', () => {
     assert.ok((ranked[0]?.score ?? 0) - (ranked[1]?.score ?? 0) >= 5);
   });
 
+  it('prefers a manageable article length during assessed cold start', () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B1',
+      inferredBand: 'B1',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    const engine = new RecommendationEngine({
+      cefrProfile: profile,
+      allowedBands: ['B2'],
+    });
+    const short = candidate('short-b2', ['alpha'], 'B2');
+    short.article.estimatedWordCount = 320;
+    const long = candidate('long-b2', ['beta'], 'B2');
+    long.article.estimatedWordCount = 2400;
+
+    const ranked = engine.recommend([long, short], new Map(), 2);
+    assert.deepEqual(ranked.map((item) => item.articleId), ['short-b2', 'long-b2']);
+  });
+
   it('applies a CEFR hard window only when enough eligible candidates remain', () => {
     const profile = buildCefrRecommendationProfile({
       recommendedBand: 'B1',

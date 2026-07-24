@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Article } from '../src/types';
 import { resolveRecommendationArticle } from '../src/lib/resolveRecommendation';
+import { buildCefrRecommendationProfile } from '../src/lib/userReadingProfile';
 
 function article(id: string, status: Article['status'] = 'Not Started'): Article {
   return {
@@ -77,6 +78,7 @@ describe('resolveRecommendationArticle chain', () => {
       {
         library: [],
         history: [],
+        userLevel: 'C1',
         useFullCatalog: false,
         localProvider: async () => null,
         libraryFallback: () => null,
@@ -98,7 +100,86 @@ describe('resolveRecommendationArticle chain', () => {
     assert.equal(resolved?.source, 'ai');
     assert.equal(resolved?.article.title, 'AI Article');
     assert.equal(resolved?.article.source, 'ai_generated');
+    assert.equal(resolved?.article.level, 'C1');
     assert.deepEqual(resolved?.article.embeddedReviewWords, ['target']);
+  });
+
+  it('passes the same CEFR profile to catalog and local recommendation paths', async () => {
+    const profile = buildCefrRecommendationProfile({
+      recommendedBand: 'B2',
+      inferredBand: 'B2',
+      totalCorrect: 5,
+      adjustment: 'same',
+      completedAt: '2026-07-25T00:00:00.000Z',
+    });
+    let catalogProfile: unknown;
+    let localProfile: unknown;
+
+    const catalogArticle = article('catalog-article', 'In Progress');
+    const resolvedCatalog = await resolveRecommendationArticle(
+      { topic: 'Current Affairs', reviewWords: [], excludeArticleIds: [] },
+      {
+        library: [],
+        history: [],
+        userLevel: profile.userLevel,
+        memoryOptions: { cefrProfile: profile },
+        useFullCatalog: true,
+        loadLemmaIndex: async () => ({
+          version: 1 as const,
+          fingerprint: 'profile-test',
+          builtAt: new Date().toISOString(),
+          articleCount: 1,
+          vocab: ['policy'],
+          articles: [{ id: 'catalog-article', title: 'Policy', level: 'B2', lemmaIndices: [0] }],
+        }),
+        rankCatalog: async (candidates, options) => {
+          catalogProfile = options.cefrProfile;
+          return [{
+            articleId: candidates[0]!.article.id,
+            score: 1,
+            dueWordsCount: 0,
+            learningZoneCount: 0,
+            consolidationZoneCount: 0,
+            unknownWordsCount: 0,
+            averageMemoryScore: 0,
+            reason: 'test',
+          }];
+        },
+        loadArticleById: async () => catalogArticle,
+        localProvider: async (_request, _library, options) => {
+          localProfile = options.cefrProfile;
+          return null;
+        },
+        libraryFallback: () => null,
+        aiPost: async () => {
+          throw new Error('AI should not run');
+        },
+      }
+    );
+
+    assert.equal(resolvedCatalog?.source, 'full_catalog');
+    assert.equal(catalogProfile, profile);
+
+    await resolveRecommendationArticle(
+      { topic: '', reviewWords: [], excludeArticleIds: [] },
+      {
+        library: [],
+        history: [],
+        userLevel: profile.userLevel,
+        memoryOptions: { cefrProfile: profile },
+        useFullCatalog: false,
+        localProvider: async (_request, _library, options) => {
+          localProfile = options.cefrProfile;
+          return article('local-profile-hit');
+        },
+        libraryFallback: () => null,
+        aiPost: async () => {
+          throw new Error('AI should not run');
+        },
+      }
+    );
+
+    assert.equal(localProfile, profile);
   });
 
   it('rethrows AbortError so callers can cancel without a false success', async () => {

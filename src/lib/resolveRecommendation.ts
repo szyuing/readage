@@ -21,6 +21,11 @@ import {
   selectLibraryFallback,
 } from './recommendationFeed';
 import {
+  buildCefrRecommendationProfile,
+  resolveUserCefrLevel,
+  type CefrRecommendationProfile,
+} from './userReadingProfile';
+import {
   getRecommendationPoolRotationDate,
   seededShuffle,
 } from './recommendationPoolRotation';
@@ -44,6 +49,7 @@ export interface ResolveRecommendationContext {
   library: Article[];
   history: Article[];
   userLevel?: string;
+  cefrProfile?: CefrRecommendationProfile;
   memoryOptions?: MemoryV2RecommendationOptions;
   /** Optional UI progress hook. */
   onPhase?: (phase: 'local' | 'library' | 'ai' | 'catalog') => void;
@@ -85,7 +91,8 @@ export interface ResolvedRecommendation {
 function buildAiArticle(
   data: RecommendedArticleCandidate,
   topic: string,
-  reviewWords: string[]
+  reviewWords: string[],
+  userLevel: string
 ): Article {
   return {
     id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -98,7 +105,7 @@ function buildAiArticle(
     }),
     status: 'In Progress',
     source: 'ai_generated',
-    level: 'B1',
+    level: userLevel,
     topic,
     content: data.paragraphs,
     keyWords: data.keyWords,
@@ -138,12 +145,24 @@ async function resolveFromFullCatalog(
     library,
     history,
     userLevel = 'B1',
+    cefrProfile,
     memoryOptions,
     onPhase,
     loadLemmaIndex,
     loadArticleById,
     rankCatalog = rankMagazineLemmaCandidates,
   } = context;
+  const profile = cefrProfile
+    ?? memoryOptions?.cefrProfile
+    ?? buildCefrRecommendationProfile(
+      null,
+      resolveUserCefrLevel({ recommendedBand: userLevel })
+    );
+  const effectiveMemoryOptions: MemoryV2RecommendationOptions = {
+    ...memoryOptions,
+    userLevel: profile.userLevel,
+    cefrProfile: profile,
+  };
 
   onPhase?.('catalog');
   const catalogStarted = Date.now();
@@ -185,6 +204,9 @@ async function resolveFromFullCatalog(
         title: article.title,
         content: article.content,
         level: article.level,
+        levelRating: article.levelRating,
+        rewriteTargetLevel: article.rewriteTargetLevel,
+        estimatedWordCount: article.levelRating?.estimatedWordCount,
         topic: article.topic,
       },
       lemmas: Array.from(lemmas),
@@ -193,13 +215,13 @@ async function resolveFromFullCatalog(
 
   const rankStarted = Date.now();
   const scores = await rankCatalog(candidates, {
+    ...effectiveMemoryOptions,
     reviewWords: request.reviewWords,
     excludeArticleIds: expandedExcludeIds,
-    userLevel,
-    preferredTopics: request.topic ? [request.topic] : memoryOptions?.preferredTopics,
+    userLevel: profile.userLevel,
+    preferredTopics: request.topic ? [request.topic] : effectiveMemoryOptions.preferredTopics,
     recentArticleIds: expandedExcludeIds,
     limit: 48,
-    ...memoryOptions,
     applyHardFilters: false,
   });
   timing.rankMs = Date.now() - rankStarted;
@@ -247,6 +269,7 @@ export async function resolveRecommendationArticle(
     library,
     history,
     userLevel = 'B1',
+    cefrProfile,
     memoryOptions,
     onPhase,
     localProvider = memoryV2RecommendationProvider,
@@ -255,6 +278,17 @@ export async function resolveRecommendationArticle(
     useFullCatalog = true,
     onTiming,
   } = context;
+  const profile = cefrProfile
+    ?? memoryOptions?.cefrProfile
+    ?? buildCefrRecommendationProfile(
+      null,
+      resolveUserCefrLevel({ recommendedBand: userLevel })
+    );
+  const effectiveMemoryOptions: MemoryV2RecommendationOptions = {
+    ...memoryOptions,
+    userLevel: profile.userLevel,
+    cefrProfile: profile,
+  };
   const { topic, reviewWords, excludeArticleIds } = request;
   // Never re-recommend pieces the user already opened (history) or saw in this feed.
   const excluded = collectExcludedArticleIds(excludeArticleIds, history);
@@ -265,7 +299,12 @@ export async function resolveRecommendationArticle(
     try {
       const catalogHit = await resolveFromFullCatalog(
         request,
-        context,
+        {
+          ...context,
+          userLevel: profile.userLevel,
+          cefrProfile: profile,
+          memoryOptions: effectiveMemoryOptions,
+        },
         excluded,
         expandedExcludeIds,
         timing,
@@ -291,11 +330,12 @@ export async function resolveRecommendationArticle(
     { topic, reviewWords, excludeArticleIds: expandedExcludeIds },
     library,
     {
+      ...effectiveMemoryOptions,
       strategy: reviewWords.length > 0 ? 'review-first' : 'balanced',
-      userLevel,
-      preferredTopics: topic ? [topic] : memoryOptions?.preferredTopics ?? [],
+      userLevel: profile.userLevel,
+      cefrProfile: profile,
+      preferredTopics: topic ? [topic] : effectiveMemoryOptions.preferredTopics ?? [],
       recentArticleIds: expandedExcludeIds,
-      ...memoryOptions,
     }
   );
 
@@ -327,7 +367,7 @@ export async function resolveRecommendationArticle(
         intent: 'recommend_article',
         topic,
         reviewWords,
-        level: userLevel,
+        level: profile.userLevel,
       },
       fetch,
       tutorOptions
@@ -338,7 +378,7 @@ export async function resolveRecommendationArticle(
       source: 'ai',
     });
     return {
-      article: buildAiArticle(response.result, topic, reviewWords),
+      article: buildAiArticle(response.result, topic, reviewWords, profile.userLevel),
       source: 'ai',
     };
   } catch (error) {
