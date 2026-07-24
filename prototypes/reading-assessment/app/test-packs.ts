@@ -1,6 +1,8 @@
 import type { CefrBand } from "./assessment-engine";
+import { EXTRA_TEST_PACKS } from "./extra-test-packs.ts";
 
 export type QuestionType = "vocabulary" | "sentence" | "discourse";
+export type TestPackVersion = "A" | "B" | "C" | "D" | "E";
 
 export type Question = {
   id: string;
@@ -13,7 +15,7 @@ export type Question = {
 
 export type TestPack = {
   id: string;
-  version: "A" | "B";
+  version: TestPackVersion;
   band: CefrBand;
   title: string;
   dek: string;
@@ -23,7 +25,7 @@ export type TestPack = {
   questions: Question[];
 };
 
-export const TEST_PACKS: Record<CefrBand, readonly [TestPack, TestPack]> = {
+const ORIGINAL_TEST_PACKS: Record<CefrBand, readonly [TestPack, TestPack]> = {
   A1: [
     {
       id: "a1-a-lunch-place",
@@ -961,6 +963,15 @@ export const TEST_PACKS: Record<CefrBand, readonly [TestPack, TestPack]> = {
       ],
     },
   ],
+};
+
+export const TEST_PACKS: Record<CefrBand, readonly TestPack[]> = {
+  A1: [...ORIGINAL_TEST_PACKS.A1, ...EXTRA_TEST_PACKS.A1],
+  A2: [...ORIGINAL_TEST_PACKS.A2, ...EXTRA_TEST_PACKS.A2],
+  B1: [...ORIGINAL_TEST_PACKS.B1, ...EXTRA_TEST_PACKS.B1],
+  B2: [...ORIGINAL_TEST_PACKS.B2, ...EXTRA_TEST_PACKS.B2],
+  C1: [...ORIGINAL_TEST_PACKS.C1, ...EXTRA_TEST_PACKS.C1],
+  C2: [...ORIGINAL_TEST_PACKS.C2, ...EXTRA_TEST_PACKS.C2],
 };
 
 export const ALL_TEST_PACKS = Object.values(TEST_PACKS).flat();

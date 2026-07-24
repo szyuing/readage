@@ -31,7 +31,7 @@ test("server-renders the Reading Edge assessment shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Reading Edge/);
   assert.match(html, /阅读难度定位原型/);
-  assert.match(html, /12/);
+  assert.match(html, /30/);
   assert.match(html, /固定套题/);
   assert.match(html, /六个/);
   assert.match(html, /Rule-based MVP/);
@@ -55,10 +55,31 @@ test("source connects all six levels to the fixed pack library", async () => {
   );
   assert.match(page, /stage === "reading"/);
   assert.match(page, /stage === "result"/);
+  assert.match(
+    page,
+    /createRandomTestSession\(PACK_LIBRARY\[result\.band\]\)/,
+  );
+  assert.match(
+    page,
+    /createRandomTestSession\(\s*PACK_LIBRARY\[inference\.band\]/,
+  );
+  assert.doesNotMatch(page, /testVersion/);
   assert.doesNotMatch(page, /setStage\("skipped"\)/);
   assert.match(page, /question\.type/);
   assert.match(page, /lookupFrequency/);
-  assert.match(page, /同级 B 卷复核/);
+  assert.match(page, /moveBetweenReadingAndQuestions\("reading"\)/);
+  assert.match(page, /moveBetweenReadingAndQuestions\("questions"\)/);
+  assert.match(page, /stage !== "reading" && stage !== "questions"/);
+  assert.match(page, /setReadingElapsed\(\(current\) => current \+ 1\)/);
+  assert.match(page, /setQuestionElapsed\(\(current\) => current \+ 1\)/);
+  assert.match(page, /totalWords \/ readingElapsed/);
+  assert.match(page, /阅读计时/);
+  assert.match(page, /答题计时/);
+  assert.match(page, /暂不参与等级判断/);
+  assert.match(page, /返回原文/);
+  assert.match(page, /查看文章不会清空已经选择的答案/);
+  assert.match(page, /继续答题（已完成 \$\{answeredCount\}\/6）/);
+  assert.match(page, /抽取同级新卷复核/);
   for (const band of ["A1", "A2", "B1", "B2", "C1", "C2"]) {
     assert.match(packs, new RegExp(`\\n  ${band}: \\[`));
   }

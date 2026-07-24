@@ -6,7 +6,11 @@ import {
   inferBand as inferBandWeighted,
   type Inference,
 } from "./assessment-engine";
-import { TEST_PACKS as PACK_LIBRARY } from "./test-packs";
+import { createRandomTestSession } from "./test-session";
+import {
+  TEST_PACKS as PACK_LIBRARY,
+  type TestPack,
+} from "./test-packs";
 
 type CefrBand = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 type Stage =
@@ -80,7 +84,8 @@ export default function Home() {
   const [goal, setGoal] = useState("originals");
   const [exams, setExams] = useState<ExamRecord[]>([createExam()]);
   const [inference, setInference] = useState<Inference | null>(null);
-  const [testVersion, setTestVersion] = useState<"A" | "B">("A");
+  const [activeTest, setActiveTest] = useState<TestPack | null>(null);
+  const [attempt, setAttempt] = useState(1);
   const [clickedTokens, setClickedTokens] = useState<Record<string, number>>({});
   const [selectedWord, setSelectedWord] = useState<{
     tokenId: string;
@@ -88,11 +93,9 @@ export default function Home() {
     definition: string;
     alignment: "left" | "center" | "right";
   } | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [readingElapsed, setReadingElapsed] = useState(0);
+  const [questionElapsed, setQuestionElapsed] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number>>({});
-  const activeTest = inference
-    ? PACK_LIBRARY[inference.band][testVersion === "A" ? 0 : 1]
-    : null;
 
   const totalWords = useMemo(() => {
     if (!activeTest) return 0;
@@ -103,10 +106,14 @@ export default function Home() {
   }, [activeTest]);
 
   useEffect(() => {
-    if (stage !== "reading") return;
+    if (stage !== "reading" && stage !== "questions") return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        setElapsed((current) => current + 1);
+        if (stage === "reading") {
+          setReadingElapsed((current) => current + 1);
+        } else {
+          setQuestionElapsed((current) => current + 1);
+        }
       }
     }, 1000);
     return () => window.clearInterval(timer);
@@ -165,7 +172,10 @@ export default function Home() {
     event.preventDefault();
     const result = inferBandWeighted(exams, selfLevel, educationStage);
     setInference(result);
-    setTestVersion("A");
+    setActiveTest(createRandomTestSession(PACK_LIBRARY[result.band]));
+    setAttempt(1);
+    setReadingElapsed(0);
+    setQuestionElapsed(0);
     setStage("routing");
     window.setTimeout(() => {
       setStage("reading");
@@ -211,23 +221,46 @@ export default function Home() {
     setInference(null);
     setClickedTokens({});
     setSelectedWord(null);
-    setElapsed(0);
+    setReadingElapsed(0);
+    setQuestionElapsed(0);
     setAnswers({});
-    setTestVersion("A");
+    setActiveTest(null);
+    setAttempt(1);
   }
 
   function startValidationPack() {
-    setTestVersion("B");
+    if (!inference) return;
+    setActiveTest(
+      createRandomTestSession(
+        PACK_LIBRARY[inference.band],
+        Math.random,
+        activeTest?.id,
+      ),
+    );
+    setAttempt(2);
     setClickedTokens({});
     setSelectedWord(null);
-    setElapsed(0);
+    setReadingElapsed(0);
+    setQuestionElapsed(0);
     setAnswers({});
     setStage("reading");
+  }
+
+  function moveBetweenReadingAndQuestions(nextStage: "reading" | "questions") {
+    setSelectedWord(null);
+    setStage(nextStage);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
   }
 
   const answeredAll = activeTest
     ? activeTest.questions.every((question) => answers[question.id] !== undefined)
     : false;
+  const answeredCount = activeTest
+    ? activeTest.questions.filter((question) => answers[question.id] !== undefined)
+        .length
+    : 0;
 
   const result = useMemo(() => {
     if (!activeTest || stage !== "result") return null;
@@ -267,7 +300,10 @@ export default function Home() {
     const recommended = clampBand(
       currentIndex + (adjustment === "up" ? 1 : adjustment === "down" ? -1 : 0),
     );
-    const wpm = elapsed > 0 ? Math.round((totalWords / elapsed) * 60) : 0;
+    const wpm =
+      readingElapsed > 0
+        ? Math.round((totalWords / readingElapsed) * 60)
+        : 0;
     const wpmValid = comprehensionCorrect >= 3;
 
     return {
@@ -280,7 +316,7 @@ export default function Home() {
       wpm,
       wpmValid,
     };
-  }, [activeTest, answers, clickedTokens, elapsed, stage, totalWords]);
+  }, [activeTest, answers, clickedTokens, readingElapsed, stage, totalWords]);
 
   const progressStep =
     stage === "questionnaire" || stage === "routing"
@@ -345,7 +381,7 @@ export default function Home() {
                 <span>CEFR 档位</span>
               </div>
               <div>
-                <strong>12</strong>
+                <strong>30</strong>
                 <span>固定套题</span>
               </div>
               <div>
@@ -624,8 +660,8 @@ export default function Home() {
                 <dd>{activeTest.readTime}</dd>
               </div>
               <div>
-                <dt>计时</dt>
-                <dd className="timer">{formatTime(elapsed)}</dd>
+                <dt>阅读计时</dt>
+                <dd className="timer">{formatTime(readingElapsed)}</dd>
               </div>
             </dl>
             <div className="click-hint">
@@ -691,8 +727,13 @@ export default function Home() {
               <p>
                 已查 <strong>{Object.keys(clickedTokens).length}</strong> 个词位
               </p>
-              <button className="primary-button" onClick={() => setStage("questions")}>
-                我读完了，开始答题
+              <button
+                className="primary-button"
+                onClick={() => moveBetweenReadingAndQuestions("questions")}
+              >
+                {answeredCount > 0
+                  ? `继续答题（已完成 ${answeredCount}/6）`
+                  : "我读完了，开始答题"}
                 <span>→</span>
               </button>
             </div>
@@ -710,9 +751,25 @@ export default function Home() {
             <h1>不是考语法，<br />而是确认你读懂了什么。</h1>
             <p>共 6 道单选题，覆盖语境词汇、句子理解和语篇理解三个层次。</p>
             <div className="answer-progress">
-              <span style={{ width: `${(Object.keys(answers).length / 6) * 100}%` }} />
+              <span style={{ width: `${(answeredCount / 6) * 100}%` }} />
             </div>
-            <small>{Object.keys(answers).length} / 6 已完成</small>
+            <small>{answeredCount} / 6 已完成</small>
+            <div className="question-timer">
+              <span>答题计时</span>
+              <strong>{formatTime(questionElapsed)}</strong>
+              <small>暂不参与等级判断</small>
+            </div>
+            <div className="question-reading-link">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => moveBetweenReadingAndQuestions("reading")}
+              >
+                <span aria-hidden="true">←</span>
+                返回原文
+              </button>
+              <p>查看文章不会清空已经选择的答案。</p>
+            </div>
           </aside>
 
           <div className="question-list">
@@ -869,6 +926,17 @@ export default function Home() {
                   <span>{result.wpmValid ? "WPM" : "理解率不足"}</span>
                 </div>
               </div>
+              <div className="time-summary">
+                <div>
+                  <small>阅读用时</small>
+                  <strong>{formatTime(readingElapsed)}</strong>
+                </div>
+                <div>
+                  <small>答题用时</small>
+                  <strong>{formatTime(questionElapsed)}</strong>
+                  <span>仅记录，暂不参与等级判断</span>
+                </div>
+              </div>
             </article>
 
             <article className="recommendation-card">
@@ -911,9 +979,9 @@ export default function Home() {
           <div className="result-actions">
             <p>这是文章推荐用的阅读起始档位，不是正式 CEFR 认证结果。</p>
             <div className="result-action-buttons">
-              {testVersion === "A" && result.adjustment === "same" && (
+              {attempt === 1 && result.adjustment === "same" && (
                 <button className="primary-button" onClick={startValidationPack}>
-                  完成同级 B 卷复核
+                  抽取同级新卷复核
                   <span>→</span>
                 </button>
               )}

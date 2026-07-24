@@ -1105,6 +1105,53 @@ select:focus-visible {
   font-size: 10px;
 }
 
+.question-timer {
+  max-width: 520px;
+  margin-top: 14px;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.question-timer > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.question-timer > strong {
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+}
+
+.question-timer > small {
+  margin: 0 0 0 auto;
+}
+
+.question-reading-link {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.question-reading-link .secondary-button {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.question-reading-link p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .question-list {
   display: grid;
   gap: 15px;
@@ -1117,7 +1164,9 @@ select:focus-visible {
 
 .question-card legend {
   width: 100%;
+  margin: 0 0 20px;
   padding: 0;
+  float: left;
   display: grid;
   grid-template-columns: 42px 1fr;
   column-gap: 8px;
@@ -1147,7 +1196,8 @@ select:focus-visible {
 }
 
 .option-grid {
-  margin-top: 20px;
+  margin-top: 0;
+  clear: both;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 9px;
@@ -1429,6 +1479,31 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.time-summary {
+  margin-top: 24px;
+  padding-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.time-summary > div {
+  display: grid;
+  gap: 5px;
+}
+
+.time-summary small,
+.time-summary span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.time-summary strong {
+  font-family: ui-monospace, monospace;
+  font-size: 20px;
+}
+
 .recommendation-card {
   background: var(--card);
   color: var(--ink);
@@ -1573,6 +1648,25 @@ select:focus-visible {
   .submit-panel {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .question-reading-link {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .question-timer {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .question-timer > small {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .time-summary {
+    grid-template-columns: 1fr;
   }
 
   .level-shift {
