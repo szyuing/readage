@@ -554,8 +554,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     // Ignore pure click noise; require a real selection (phrase/sentence)
     if (text.length < 2 || text.length > 4000) return;
 
-    void openWordCard(text, text);
-
     void copyTextToClipboard(text).then((ok) => {
       if (ok) flashCopyHint('已复制到剪贴板');
     });
