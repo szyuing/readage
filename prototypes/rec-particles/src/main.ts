@@ -52,6 +52,11 @@ function setStatus(mode: 'live' | 'demo' | 'wait', text: string): void {
   if (!statusEl) return;
   statusEl.className = mode === 'wait' ? 'demo' : mode;
   statusEl.textContent = text;
+  const hudMode = document.getElementById('hud-mode');
+  if (hudMode) {
+    hudMode.className = `hud-mode ${mode}`;
+    hudMode.textContent = mode === 'live' ? 'Live' : mode === 'demo' ? 'Demo' : 'Waiting';
+  }
 }
 
 function setViewMode(mode: ViewMode): void {

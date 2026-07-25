@@ -133,7 +133,7 @@
         top: 88px;
         left: 24px;
         z-index: 20;
-        width: min(438px, calc(100vw - 48px));
+        width: min(390px, calc(100vw - 48px));
         max-height: calc(100vh - 112px);
         overflow: auto;
         border: 1px solid rgba(211, 201, 184, .94);
@@ -178,6 +178,8 @@
         font-weight: 700;
         white-space: nowrap;
       }
+      .hud-mode.wait { color: var(--warning); }
+      .hud-mode.demo { color: var(--warning); }
       .hud-mode::before {
         width: 6px;
         height: 6px;
@@ -278,6 +280,62 @@
       }
       .legend strong { color: var(--ink); font-weight: 750; }
 
+      .canvas-guide {
+        position: fixed;
+        top: 88px;
+        right: 24px;
+        z-index: 10;
+        width: min(292px, calc(100vw - 450px));
+        padding: 14px 16px;
+        border: 1px solid rgba(211, 201, 184, .82);
+        border-radius: var(--radius-md);
+        background: rgba(255, 253, 249, .62);
+        color: var(--ink-soft);
+        font-size: 11px;
+        line-height: 1.5;
+        backdrop-filter: blur(10px);
+      }
+      .canvas-guide-title {
+        margin: 0 0 10px;
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .canvas-guide-flow {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px;
+        margin-bottom: 10px;
+      }
+      .canvas-guide-flow span {
+        padding: 5px 4px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgba(241, 237, 228, .62);
+        color: var(--ink-soft);
+        font-size: 10px;
+        text-align: center;
+      }
+      .canvas-guide-flow span.active { border-color: #d98a6a; background: var(--accent-soft); color: var(--accent); }
+      .canvas-guide-flow span.done { border-color: #b8d5bf; background: var(--success-soft); color: var(--success); }
+      .canvas-guide-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px 12px;
+      }
+      .canvas-guide-key span { display: inline-flex; align-items: center; gap: 5px; }
+      .canvas-guide-key i {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+      }
+      .canvas-guide-key .pool i { background: var(--ink-muted); }
+      .canvas-guide-key .shortlist i { background: var(--accent); }
+      .canvas-guide-key .winner i { background: var(--warning); box-shadow: 0 0 0 3px rgba(253, 230, 138, .55); }
+
       #status {
         position: fixed;
         right: 22px;
@@ -304,10 +362,11 @@
         .topbar-actions { gap: 2px; }
         .mode-btn { min-height: 29px; padding: 0 8px; font-size: 11px; }
         #hud {
-          top: 74px;
+          top: auto;
+          bottom: 12px;
           left: 12px;
           width: calc(100vw - 24px);
-          max-height: 286px;
+          max-height: min(55vh, 480px);
           border-radius: 15px;
         }
         .hud-head { padding: 16px 17px 15px; }
@@ -315,6 +374,13 @@
         .pipeline-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
         .meta-grid { grid-template-columns: 1fr 1fr; gap: 7px; }
         .meta-grid .row { padding: 9px 10px; }
+        .canvas-guide {
+          top: 74px;
+          right: 12px;
+          width: calc(100vw - 24px);
+          padding: 10px 12px;
+        }
+        .canvas-guide-flow { margin-bottom: 7px; }
         #status { display: none; }
       }
 
@@ -323,6 +389,10 @@
         .topbar-titles h1 { font-size: 15px; }
         .mode-btn { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .meta-grid { grid-template-columns: 1fr; }
+        .canvas-guide { font-size: 10px; }
+        .canvas-guide-flow { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+        .canvas-guide-flow span { padding: 4px 2px; font-size: 9px; }
+        .canvas-guide-key { display: none; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -348,11 +418,28 @@
 
     <canvas id="canvas" aria-label="Recommendation particle visualization"></canvas>
 
+    <section class="canvas-guide" aria-label="How to read the recommendation visualization">
+      <p class="canvas-guide-title">How to read this view</p>
+      <div class="canvas-guide-flow">
+        <span data-guide-step="catalog">Catalog</span>
+        <span data-guide-step="filter">Filter</span>
+        <span data-guide-step="score">Score</span>
+        <span data-guide-step="shortlist">Shortlist</span>
+        <span data-guide-step="pick">Pick</span>
+        <span data-guide-step="hydrate">Open</span>
+      </div>
+      <div class="canvas-guide-key">
+        <span class="pool"><i aria-hidden="true"></i>candidate pool</span>
+        <span class="shortlist"><i aria-hidden="true"></i>shortlist</span>
+        <span class="winner"><i aria-hidden="true"></i>selected</span>
+      </div>
+    </section>
+
     <aside id="hud" aria-live="polite">
       <div class="hud-head">
         <div class="hud-kicker-row">
           <p class="hud-kicker">Current step</p>
-          <span class="hud-mode">Real-time</span>
+          <span class="hud-mode wait" id="hud-mode">Waiting</span>
         </div>
         <p class="title" id="hud-title">等待主站真实推荐</p>
       </div>

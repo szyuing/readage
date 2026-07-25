@@ -115,7 +115,7 @@ function scoreToOrbit(score: number, minScore: number, maxScore: number, maxR: n
 }
 
 function maxOrbit(state: SimState): number {
-  return Math.min(state.width, state.height) * 0.44;
+  return Math.min(state.width, state.height) * (state.width <= 720 ? 0.34 : 0.44);
 }
 
 function spawnCloud(

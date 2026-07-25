@@ -118,12 +118,13 @@ export function renderSim(ctx: CanvasRenderingContext2D, state: SimState): void 
   ctx.fillRect(0, 0, width, height);
 
   const cx = width / 2;
-  const cy = height / 2 + 12;
+  const cy = width <= 720 ? height * 0.25 : height / 2 + 12;
+  const ringScale = width <= 720 ? 0.10 : 0.14;
 
   // Quiet orbit rings — like notebook guides
   ctx.strokeStyle = 'rgba(227, 221, 209, 0.9)';
   ctx.lineWidth = 1;
-  for (const r of [0.14, 0.28, 0.42]) {
+  for (const r of [ringScale, ringScale * 2, ringScale * 3]) {
     ctx.beginPath();
     ctx.arc(cx, cy, Math.min(width, height) * r, 0, Math.PI * 2);
     ctx.stroke();
@@ -136,7 +137,7 @@ export function renderSim(ctx: CanvasRenderingContext2D, state: SimState): void 
     4,
     cx,
     cy,
-    Math.min(width, height) * 0.22
+    Math.min(width, height) * (width <= 720 ? 0.16 : 0.22)
   );
   if (state.pipeline === 'hydrate') {
     core.addColorStop(0, 'rgba(253, 230, 138, 0.55)');
@@ -148,7 +149,7 @@ export function renderSim(ctx: CanvasRenderingContext2D, state: SimState): void 
   }
   ctx.fillStyle = core;
   ctx.beginPath();
-  ctx.arc(cx, cy, Math.min(width, height) * 0.22, 0, Math.PI * 2);
+  ctx.arc(cx, cy, Math.min(width, height) * (width <= 720 ? 0.16 : 0.22), 0, Math.PI * 2);
   ctx.fill();
 
   const ordered = [...particles].sort((a, b) => a.alpha - b.alpha);
@@ -216,11 +217,9 @@ const PIPELINE_ORDER: PipelineStage[] = [
 ];
 
 function syncPipelineChips(pipeline: PipelineStage): void {
-  const root = document.getElementById('pipeline-steps');
-  if (!root) return;
   const idx = PIPELINE_ORDER.indexOf(pipeline);
-  root.querySelectorAll<HTMLElement>('[data-step]').forEach((el) => {
-    const step = el.dataset.step as PipelineStage;
+  document.querySelectorAll<HTMLElement>('[data-step], [data-guide-step]').forEach((el) => {
+    const step = (el.dataset.step || el.dataset.guideStep) as PipelineStage;
     const stepIdx = PIPELINE_ORDER.indexOf(step);
     el.classList.remove('active', 'done');
     if (stepIdx >= 0 && idx >= 0 && stepIdx < idx) el.classList.add('done');
