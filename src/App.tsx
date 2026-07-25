@@ -1030,14 +1030,6 @@ export default function App() {
     );
   };
 
-  // First-time: keep users on the CEFR assessment until they have a band.
-  useEffect(() => {
-    if (assessmentResult) return;
-    if (route.kind !== 'recommendation') return;
-    navigate({ kind: 'assessment' }, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assessmentResult, route.kind]);
-
   const handleRecommendationAdvance = (payload: ReadingAdvancePayload) => {
     const current = recommendationFeedRef.current;
     if (
@@ -1194,10 +1186,6 @@ export default function App() {
     return getRecommendationRenderWindow(current, recommendationFeed.queuedArticle);
   }, [activeArticle, isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
   const goToRecommendation = () => {
-    if (!assessmentResult) {
-      navigate({ kind: 'assessment' }, { replace: true });
-      return;
-    }
     resetRecommendationFeed();
     navigate({ kind: 'recommendation' });
   };
