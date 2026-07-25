@@ -22,6 +22,109 @@ body {
   color: #2b2723;
 }
 
+/* Recommendation loading visual matching the level placement animation. */
+.recommendation-loading-visual {
+  width: min(360px, 100%);
+  display: grid;
+  justify-items: center;
+}
+
+.recommendation-loading-orbit {
+  width: 128px;
+  height: 128px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d2c9bd;
+  border-radius: 50%;
+}
+
+.recommendation-loading-orbit::before {
+  content: "";
+  width: 160px;
+  height: 76px;
+  position: absolute;
+  border: 1px solid #ddd5ca;
+  border-radius: 50%;
+  transform: rotate(22deg);
+  animation: recommendation-loading-orbit 3s linear infinite;
+}
+
+.recommendation-loading-orbit span {
+  width: 12px;
+  height: 12px;
+  position: absolute;
+  border-radius: 50%;
+  background: #c35e37;
+  box-shadow: 0 0 0 5px rgba(195, 94, 55, 0.12);
+}
+
+.recommendation-loading-orbit span:first-child {
+  top: 4px;
+  right: 20px;
+}
+
+.recommendation-loading-orbit span:nth-child(2) {
+  bottom: 14px;
+  left: 8px;
+  background: #587f8f;
+}
+
+.recommendation-loading-orbit strong {
+  color: #2b2723;
+  font-family: Georgia, serif;
+  font-size: 38px;
+  font-style: italic;
+}
+
+@keyframes recommendation-loading-orbit {
+  to {
+    transform: rotate(382deg);
+  }
+}
+
+.recommendation-loading-lines {
+  width: min(360px, 100%);
+  margin-top: 26px;
+  display: grid;
+  gap: 9px;
+}
+
+.recommendation-loading-lines span {
+  height: 6px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #e5dfd5 20%, #c35e37 50%, #e5dfd5 80%);
+  background-size: 200% 100%;
+  animation: recommendation-loading-line 1.4s ease infinite;
+}
+
+.recommendation-loading-lines span:nth-child(2) {
+  width: 78%;
+  animation-delay: 120ms;
+}
+
+.recommendation-loading-lines span:nth-child(3) {
+  width: 62%;
+  animation-delay: 240ms;
+}
+
+@keyframes recommendation-loading-line {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recommendation-loading-orbit::before,
+  .recommendation-loading-lines span {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}
+
 /* Prefer dynamic viewport units when available (mobile browser chrome). */
 .min-h-screen {
   min-height: 100vh;

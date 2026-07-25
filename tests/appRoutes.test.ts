@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildAppPath, parseAppPath, resolveInitialAppRoute } from '../src/lib/appRoutes';
+import {
+  buildAppPath,
+  parseAppPath,
+  readAppHistoryIndex,
+  resolveInitialAppRoute,
+  withAppHistoryIndex,
+} from '../src/lib/appRoutes';
 
 test('parses the recommendation entry and supported page paths', () => {
   assert.deepEqual(parseAppPath('/'), { kind: 'recommendation' });
@@ -38,4 +44,15 @@ test('first-time visitors are routed to assessment from home', () => {
   assert.deepEqual(resolveInitialAppRoute('/library', false), { kind: 'library' });
   assert.deepEqual(resolveInitialAppRoute('/assessment', false), { kind: 'assessment' });
   assert.deepEqual(resolveInitialAppRoute('/learning', false), { kind: 'learning' });
+});
+
+test('tracks only valid application history markers', () => {
+  assert.equal(readAppHistoryIndex(null), null);
+  assert.equal(readAppHistoryIndex({ __englishAiHistory: { index: -1 } }), null);
+  assert.equal(readAppHistoryIndex({ __englishAiHistory: { index: 2 } }), 2);
+
+  assert.deepEqual(
+    withAppHistoryIndex({ source: 'test' }, 3),
+    { source: 'test', __englishAiHistory: { index: 3 } },
+  );
 });

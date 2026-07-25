@@ -151,7 +151,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   }, [article.id]);
 
   useEffect(() => {
-    if (isComposerExpanded) composerInputRef.current?.focus();
+    if (isComposerExpanded) composerInputRef.current?.focus({ preventScroll: true });
   }, [isComposerExpanded]);
 
   const [showMenu, setShowMenu] = useState(false);
@@ -801,7 +801,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const shouldIgnoreSwipeTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
-    return Boolean(target.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"]'));
+    return Boolean(target.closest(
+      'button, input, textarea, select, a, [role="button"], [contenteditable="true"], [data-reading-interaction="true"]'
+    ));
   };
 
   const canStartSwipe = (target: EventTarget | null): boolean => {
@@ -1393,6 +1395,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </section>
             );
           })}
+
+          {mode === 'recommendation-feed' && continuationArticleList.length === 0 && (
+            <div
+              className="mt-10 min-h-[100dvh] border-t border-[#E7E2D5] pt-8 text-center text-sm text-[#8C8478]"
+              aria-live="polite"
+            >
+              Preparing your next article...
+            </div>
+          )}
         </div>
       </main>
 
@@ -1468,7 +1479,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       )}
 
       {showChatPanel && !isComposerExpanded && (
-        <div className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-40 flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96">
+        <div data-reading-interaction="true" className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-40 flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96">
           <div className="flex items-center justify-between border-b border-[#E8E2D5] pb-2 mb-3">
             <div className="min-w-0">
               <span className="font-serif font-semibold text-sm text-[#332E28] flex items-center gap-1.5">
@@ -1512,6 +1523,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
       {isComposerExpanded ? (
         <footer
+          data-reading-interaction="true"
           className="fixed inset-x-0 bottom-0 z-40 sm:inset-x-auto sm:bottom-auto sm:right-8 sm:top-1/2 sm:w-[min(28rem,calc(100vw-2rem))] sm:-translate-y-1/2"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
@@ -1607,6 +1619,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         createPortal(
           <button
             type="button"
+            data-reading-interaction="true"
             onClick={() => setIsComposerExpanded(true)}
             className="fixed z-40 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-3.5 sm:p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
             aria-label="Open article discussion input"

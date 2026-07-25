@@ -41,9 +41,24 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
           aria-busy={isLoading}
           aria-live="polite"
         >
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#F3E4DA] text-[#C35E37]">
-            <Sparkles className="h-7 w-7" aria-hidden="true" />
-          </div>
+          {isLoading ? (
+            <div className="recommendation-loading-visual" aria-hidden="true">
+              <div className="recommendation-loading-orbit">
+                <span />
+                <span />
+                <strong>R</strong>
+              </div>
+              <div className="recommendation-loading-lines">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
+          ) : (
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#F3E4DA] text-[#C35E37]">
+              <Sparkles className="h-7 w-7" aria-hidden="true" />
+            </div>
+          )}
           <h1 className="mt-5 font-serif text-[1.75rem] font-normal leading-tight text-[#2A2622] sm:text-4xl">
             Recommended Reading
           </h1>

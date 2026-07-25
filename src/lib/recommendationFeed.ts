@@ -78,6 +78,18 @@ export function consumeQueuedRecommendation(
   };
 }
 
+/**
+ * Keep the continuous reader bounded to the article in view and one ready
+ * successor. Older recommendations are closed once the reader advances.
+ */
+export function getRecommendationRenderWindow(
+  currentArticle: Article,
+  queuedArticle: Article | null,
+): Article[] {
+  if (!queuedArticle || queuedArticle.id === currentArticle.id) return [currentArticle];
+  return [currentArticle, queuedArticle];
+}
+
 export function endRecommendationFeed(
   state: RecommendationFeedState
 ): RecommendationFeedState {

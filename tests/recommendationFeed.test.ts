@@ -8,6 +8,7 @@ import {
   endRecommendationFeed,
   failRecommendationPrefetch,
   finishRecommendationPrefetch,
+  getRecommendationRenderWindow,
   selectLibraryFallback,
   startRecommendationFeed,
 } from '../src/lib/recommendationFeed';
@@ -55,6 +56,17 @@ test('consuming a queued article marks it seen and frees the prefetch slot', () 
   assert.equal(result.article?.id, 'next');
   assert.equal(result.state.queuedArticle, null);
   assert.deepEqual(result.state.seenArticleIds, ['current', 'next']);
+});
+
+test('recommendation render window keeps only the current and prefetched article', () => {
+  assert.deepEqual(
+    getRecommendationRenderWindow(article('current'), article('next')),
+    [article('current'), article('next')]
+  );
+  assert.deepEqual(
+    getRecommendationRenderWindow(article('current'), null),
+    [article('current')]
+  );
 });
 
 test('library fallback skips completed and already-seen articles in stable order', () => {

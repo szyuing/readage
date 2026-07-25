@@ -6,6 +6,33 @@ export type AppRoute =
   | { kind: 'learning' }
   | { kind: 'history' };
 
+export const APP_HISTORY_STATE_KEY = '__englishAiHistory';
+
+type AppHistoryState = {
+  [APP_HISTORY_STATE_KEY]?: {
+    index?: unknown;
+  };
+};
+
+export function readAppHistoryIndex(state: unknown): number | null {
+  if (!state || typeof state !== 'object') return null;
+  const marker = (state as AppHistoryState)[APP_HISTORY_STATE_KEY];
+  if (!marker || typeof marker !== 'object') return null;
+  return typeof marker.index === 'number'
+    && Number.isInteger(marker.index)
+    && marker.index >= 0
+    ? marker.index
+    : null;
+}
+
+export function withAppHistoryIndex(state: unknown, index: number): Record<string, unknown> {
+  const base = state && typeof state === 'object'
+    ? { ...(state as Record<string, unknown>) }
+    : {};
+  base[APP_HISTORY_STATE_KEY] = { index };
+  return base;
+}
+
 const SIMPLE_ROUTE_PATHS = {
   recommendation: '/',
   library: '/library',

@@ -32,6 +32,7 @@ import {
   endRecommendationFeed,
   failRecommendationPrefetch,
   finishRecommendationPrefetch,
+  getRecommendationRenderWindow,
   markRecommendationArticleSeen,
   selectLibraryFallback,
   startRecommendationFeed,
@@ -71,8 +72,15 @@ import {
   normalizeUserReadingAssessment,
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
-import { buildAppPath, parseAppPath, resolveInitialAppRoute, type AppRoute } from './lib/appRoutes';
-import { BookOpen, BarChart3, History, Library, Sparkles } from 'lucide-react';
+import {
+  buildAppPath,
+  parseAppPath,
+  readAppHistoryIndex,
+  resolveInitialAppRoute,
+  withAppHistoryIndex,
+  type AppRoute,
+} from './lib/appRoutes';
+import { BookOpen, BarChart3, Compass, History, Library } from 'lucide-react';
 import {
   useDueWords,
   useProficiencyStats,
@@ -224,7 +232,13 @@ export default function App() {
     const nextPath = buildAppPath(nextRoute);
     if (typeof window !== 'undefined' && window.location.pathname !== nextPath) {
       const method = options.replace ? 'replaceState' : 'pushState';
-      window.history[method]({}, '', nextPath);
+      const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
+      const nextIndex = options.replace ? currentIndex : currentIndex + 1;
+      window.history[method](
+        withAppHistoryIndex(window.history.state, nextIndex),
+        '',
+        nextPath,
+      );
     }
     setRoute(nextRoute);
   };
@@ -239,9 +253,12 @@ export default function App() {
 
   useEffect(() => {
     const canonicalPath = buildAppPath(route);
-    if (window.location.pathname !== canonicalPath) {
-      window.history.replaceState({}, '', canonicalPath);
-    }
+    const currentIndex = readAppHistoryIndex(window.history.state) ?? 0;
+    window.history.replaceState(
+      withAppHistoryIndex(window.history.state, currentIndex),
+      '',
+      canonicalPath,
+    );
     // Canonicalize only the initial deep link; later navigations use navigate().
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1072,13 +1089,11 @@ export default function App() {
     }
 
     updateRecommendationFeed(nextState);
-    updateRecommendationArticles((articles) => (
-      articles.some((article) => article.id === nextArticle!.id)
-        ? articles
-        : [...articles, nextArticle!]
-    ));
+    // Close the previous article as soon as the next one takes over. The
+    // reader keeps at most the current article plus one prefetched successor.
+    updateRecommendationArticles([nextArticle]);
     ingestArticle(nextArticle, {
-      open: false,
+      open: true,
       source: nextArticle.source === 'ai_generated' ? 'recommend' : 'history',
       preserveRecommendationFeed: true,
     });
@@ -1189,12 +1204,10 @@ export default function App() {
   );
   const continuousReadingArticles = useMemo(() => {
     if (!isRecommendationReading) return undefined;
-    const queued = recommendationFeed.queuedArticle;
-    if (!queued || recommendationArticles.some((article) => article.id === queued.id)) {
-      return recommendationArticles;
-    }
-    return [...recommendationArticles, queued];
-  }, [isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
+    const current = activeArticle || recommendationArticles[0];
+    if (!current) return [];
+    return getRecommendationRenderWindow(current, recommendationFeed.queuedArticle);
+  }, [activeArticle, isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
   const goToRecommendation = () => {
     if (!assessmentResult) {
       navigate({ kind: 'assessment' }, { replace: true });
@@ -1207,8 +1220,23 @@ export default function App() {
       startRecommendationFromEntry();
     }
   };
-  const returnHome = goToRecommendation;
-  const goBack = () => window.history.back();
+  const goBackOrFallback = (fallback: () => void) => {
+    const currentIndex = readAppHistoryIndex(window.history.state);
+    if (currentIndex != null && currentIndex > 0) {
+      window.history.back();
+      return;
+    }
+    fallback();
+  };
+  const goBackOrRecommendation = () => goBackOrFallback(goToRecommendation);
+  const goBackFromAssessment = () => goBackOrFallback(() => {
+    if (!assessmentResult) {
+      navigate({ kind: 'library' }, { replace: true });
+      return;
+    }
+    goToRecommendation();
+  });
+  const returnHome = goBackOrRecommendation;
   const appNavigation = (
     <nav
       className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
@@ -1217,7 +1245,7 @@ export default function App() {
       <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
-            { id: 'recommendation' as const, label: 'Recommend', icon: Sparkles },
+            { id: 'recommendation' as const, label: 'Recommend', icon: Compass },
             { id: 'library' as const, label: 'Library', icon: Library },
             { id: 'reading' as const, label: 'P2', icon: BookOpen },
             { id: 'learning' as const, label: 'P3', icon: BarChart3 },
@@ -1333,21 +1361,14 @@ export default function App() {
               resetRecommendationFeed();
               navigate({ kind: 'assessment' });
             }}
-            onBack={goBack}
+            onBack={goBackOrRecommendation}
             navigation={appNavigation}
           />
         )}
 
         {route.kind === 'assessment' && (
           <ReadingAssessmentScreen
-            onBack={() => {
-              // Allow escape to Library before first rating; after rating, return to Recommend.
-              if (!assessmentResult) {
-                navigate({ kind: 'library' });
-                return;
-              }
-              goToRecommendation();
-            }}
+            onBack={goBackFromAssessment}
             previousResult={assessmentResult}
             onComplete={(result) => {
               setAssessmentResult(result);
@@ -1376,7 +1397,7 @@ export default function App() {
               })
             }
             onInsertArticle={() => setShowEnterArticle(true)}
-            onBack={goToRecommendation}
+            onBack={goBackOrRecommendation}
             navigation={appNavigation}
           />
         )}
@@ -1397,7 +1418,7 @@ export default function App() {
                 ? () => handleOpenParentArticle(activeArticle.parentArticleId!)
                 : undefined
             }
-            onBack={returnHome}
+            onBack={goBackOrRecommendation}
             onWordClick={handleWordClick}
             onGrammarQuery={handleGrammarQuery}
             mode={isRecommendationReading ? 'recommendation-feed' : 'single'}
@@ -1434,7 +1455,7 @@ export default function App() {
                 onClick={returnHome}
                 className="mt-6 rounded-xl bg-[#C35E37] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#A94E2D]"
               >
-                返回首页
+                返回上一页
               </button>
             </div>
           </div>
@@ -1447,14 +1468,14 @@ export default function App() {
               onClick={returnHome}
               className="px-4 py-2 bg-[#C35E37] text-white rounded-xl text-sm"
             >
-              返回首页
+              返回上一页
             </button>
           </div>
         )}
 
         {route.kind === 'learning' && (
           <MyLearningScreen
-            onBack={goToRecommendation}
+            onBack={goBackOrRecommendation}
             navigation={appNavigation}
             onStartTargetedReview={handleStartTargetedReview}
             onOpenArticle={(id) => {
@@ -1484,7 +1505,7 @@ export default function App() {
             onSelectArticle={(article) =>
               ingestArticle(article, { open: true, source: 'history' })
             }
-            onBack={goToRecommendation}
+            onBack={goBackOrRecommendation}
             navigation={appNavigation}
           />
         )}

@@ -64,7 +64,7 @@ function setViewMode(mode: ViewMode): void {
   const legend = document.querySelector('.legend');
   if (legend) {
     legend.innerHTML = mode === 'vocab'
-      ? '<strong>怎么看：</strong>像生词本。看见了 / 查过 / 读过 用标签区分。刚操作的词会放大讲一句人话。没有转圈。'
+      ? '<strong>怎么看：</strong>词卡自动换行排布，互不重叠；装不下会收起。刚操作的词单独放大说明。'
       : '<strong>真实推荐：</strong>全库打分→过滤→头部→日种子→打开正文。默认不模拟。';
   }
   if (mode === 'vocab') syncVocabHud(vocabState);
