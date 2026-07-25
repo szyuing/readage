@@ -53,6 +53,23 @@ let recommendationNavigationHintShown = false;
 
 const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
+function getArticleHighlightTerms(readingArticle?: Article): string[] {
+  if (!readingArticle) return [];
+  return [
+    ...(readingArticle.keyWords || []),
+    ...(readingArticle.source === 'level_rewrite'
+      ? []
+      : (readingArticle.embeddedReviewWords || [])),
+  ];
+}
+
+function getArticleReviewWords(readingArticle: Article): string[] {
+  if (readingArticle.source === 'level_rewrite') return [];
+  return Array.from(
+    new Set((readingArticle.embeddedReviewWords || []).map((word) => word.trim()).filter(Boolean)),
+  );
+}
+
 interface ReadingScreenProps {
   article: Article;
   /** App-level navigation rendered in place of the article title header. */
@@ -308,10 +325,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               ? primary
               : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
             const paragraphText = paragraphArticle?.content[paragraphIndex] ?? paragraph.textContent ?? '';
-            const articleHighlightTerms = [
-              ...(paragraphArticle?.keyWords || []),
-              ...(paragraphArticle?.embeddedReviewWords || []),
-            ];
+            const articleHighlightTerms = getArticleHighlightTerms(paragraphArticle);
             const learningUnits = extractLearningUnits(paragraphText, articleHighlightTerms);
             const staged = stagedExposuresFor(paragraphArticleId);
             const newWordIds = [...new Set(
@@ -474,13 +488,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     };
   }, [article.id, mode, continuousArticles]);
 
-  const highlightTerms = [
-    ...(article.keyWords || []),
-    ...(article.embeddedReviewWords || []),
-  ];
-  const reviewWords: string[] = Array.from(
-    new Set((article.embeddedReviewWords || []).map((word) => word.trim()).filter(Boolean)),
-  );
+  const highlightTerms = getArticleHighlightTerms(article);
+  const reviewWords = getArticleReviewWords(article);
   const currentLastParagraphIndex = article.content.reduce(
     (lastIndex, paragraph, index) =>
       classifyArticleParagraph(paragraph, article.title) === 'furniture' ? lastIndex : index,
@@ -1374,10 +1383,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   {nextArticle.content.map((paragraph, pIdx) => {
                     const paragraphKind = classifyArticleParagraph(paragraph, nextArticle.title);
                     if (paragraphKind === 'furniture') return null;
-                    const nextHighlightTerms = [
-                      ...(nextArticle.keyWords || []),
-                      ...(nextArticle.embeddedReviewWords || []),
-                    ];
+                    const nextHighlightTerms = getArticleHighlightTerms(nextArticle);
                     const inlineContent = paragraphKind === 'author'
                       ? paragraph
                       : renderInteractiveParagraph(paragraph, nextArticle, nextHighlightTerms);

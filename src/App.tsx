@@ -58,6 +58,7 @@ import {
   type ImportJobSource,
 } from './lib/articleImport';
 import { buildIntentionalLevelRating } from './lib/articleLevel';
+import { buildLevelRewriteArticle } from './lib/rewriteArticle';
 import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
 import { LandingPage } from './components/LandingPage';
 import { ReadingScreen } from './components/ReadingScreen';
@@ -1159,12 +1160,6 @@ export default function App() {
     setIsRewriting(true);
     setRewriteProgress(`正在生成 CEFR ${targetLevel} 版本…`);
     try {
-      const reviewWords = (
-        sourceArticle.embeddedReviewWords?.length
-          ? sourceArticle.embeddedReviewWords
-          : dueLemmas
-      ).slice(0, 5);
-
       // Cap source size for the rewrite prompt (server also truncates).
       const paragraphs = sourceArticle.content
         .map((p) => p.trim())
@@ -1176,7 +1171,6 @@ export default function App() {
         level: targetLevel,
         paragraphs,
         topic: sourceArticle.title,
-        reviewWords,
       });
       const data = response.result;
       const resolvedLevel = (data.level || targetLevel).toUpperCase();
@@ -1185,30 +1179,24 @@ export default function App() {
         resolvedLevel,
         `本篇唯一 CEFR 评级为 ${resolvedLevel}（由原文「${sourceArticle.title}」改写生成）。`
       );
-      const newArticle: Article = {
+      const newArticle = buildLevelRewriteArticle({
+        sourceArticle,
+        candidate: {
+          title: data.title?.includes(resolvedLevel)
+            ? data.title
+            : `${data.title || sourceArticle.title} · ${resolvedLevel}`,
+          description: data.description || `CEFR ${resolvedLevel} rewrite of “${sourceArticle.title}”`,
+          paragraphs: data.paragraphs,
+          keyWords: data.keyWords,
+        },
+        levelRating,
         id: `rewrite-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        title: data.title?.includes(resolvedLevel)
-          ? data.title
-          : `${data.title || sourceArticle.title} · ${resolvedLevel}`,
-        description: data.description || `CEFR ${resolvedLevel} rewrite of “${sourceArticle.title}”`,
         date: new Date().toLocaleDateString('en-US', {
           month: 'short',
           day: 'numeric',
           year: 'numeric',
         }),
-        status: 'In Progress',
-        source: 'level_rewrite',
-        level: levelRating.level,
-        levelRating,
-        rewriteTargetLevel: levelRating.level,
-        parentArticleId: sourceArticle.id,
-        parentArticleTitle: sourceArticle.title,
-        content: data.paragraphs,
-        keyWords: data.keyWords,
-        embeddedReviewWords: reviewWords.length ? reviewWords : undefined,
-        topic: sourceArticle.topic,
-        importEnrichmentStatus: 'pending',
-      };
+      });
 
       setRewriteProgress(`已生成 ${resolvedLevel} 版本，正在入库…`);
       beginReadingSession(newArticle, { source: 'manual' });
