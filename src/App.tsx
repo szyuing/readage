@@ -1300,7 +1300,7 @@ export default function App() {
           [
             { id: 'library' as const, label: 'Library', icon: Library },
             { id: 'reading' as const, label: '阅读', icon: BookOpen },
-            { id: 'learning' as const, label: '学习', icon: BarChart3 },
+            { id: 'learning' as const, label: '数据', icon: BarChart3 },
             { id: 'history' as const, label: '历史', icon: History },
           ] as const
         ).map(({ id, label, icon: Icon }) => {
