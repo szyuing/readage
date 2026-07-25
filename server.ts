@@ -789,13 +789,18 @@ async function handleRewriteArticle(request: TutorRequest): Promise<{
   }
 
   const req = { ...request, level };
-  let generated: unknown = await generateJson<unknown>(rewriteArticlePrompt(req), articleSchema);
+  let generated: unknown = await generateJson<unknown>(
+    rewriteArticlePrompt(req),
+    articleSchema,
+    deepSeekArticleLlmOptions()
+  );
   let validation = validateRewrittenArticle(generated, reviewWords);
 
   if (!validation.isValid) {
     generated = await generateJson<unknown>(
       rewriteArticlePrompt(req, validation.errors),
-      articleSchema
+      articleSchema,
+      deepSeekArticleLlmOptions()
     );
     validation = validateRewrittenArticle(generated, reviewWords);
   }

@@ -13,7 +13,8 @@
         "lint": "tsc --noEmit",
         "test": "tsx --test tests/*.test.ts",
         "test:10k": "tsx --test tests/articleImportEnrichment.10k.test.ts",
-        "enrich:magazines": "node scripts/enrich-all-magazines.mjs"
+        "enrich:magazines": "node scripts/enrich-all-magazines.mjs",
+        "generate:economist-rewrites": "node scripts/generate-economist-rewrites.mjs"
     },
     "dependencies": {
         "@google/genai": "^2.4.0",

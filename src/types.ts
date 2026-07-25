@@ -161,6 +161,13 @@ export interface Article {
   rewriteTargetLevel?: string;
   /** Optional title of the parent article for UI ("改写自…"). */
   parentArticleTitle?: string;
+  /** Hidden provenance for catalog-generated articles; intentionally not shown as a rewrite banner. */
+  generatedFromArticleId?: string;
+  generatedFromArticleTitle?: string;
+  generationKind?: string;
+  generationProvider?: string;
+  generationModel?: string;
+  generatedAt?: string;
 }
 
 export interface ReviewWord {
