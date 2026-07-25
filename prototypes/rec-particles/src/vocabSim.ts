@@ -113,7 +113,9 @@ function measureChip(wordId: string, focus = false): { w: number; h: number } {
     };
   }
   return {
-    w: Math.max(88, 40 + len * 7.6),
+    // Reserve space for the word and the status pill independently.
+    // A narrow fixed minimum makes even short words render as "ab...".
+    w: Math.max(120, 44 + len * 7.6 + 48),
     h: CHIP_H,
   };
 }
