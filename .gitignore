@@ -10,6 +10,8 @@ data/magazines/
 local-data/
 *.pid
 *.wav
+# Local packaging / export archives (too large for git)
+*.tgz
 # 113MB offline dictionary binary pack (restore from the dictionary distribution)
 vendor/nextword-local-dictionary/data/*.pack
 
