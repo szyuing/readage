@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  ARTICLE_IMPORT_CONCURRENCY,
   getArticleImportQueue,
   type ImportQueueSnapshot,
 } from './queue';
@@ -11,7 +12,7 @@ const EMPTY_SNAPSHOT: ImportQueueSnapshot = {
   active: null,
   isProcessing: false,
   bannerMessage: null,
-  concurrency: 2,
+  concurrency: ARTICLE_IMPORT_CONCURRENCY,
 };
 
 /** Subscribe to the shared import-module queue for UI banners / progress. */

@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Paragraph-by-paragraph AI translation
  * - Full-article CEFR rating
- * - Background serial job queue (store first, enrich later)
+ * - Background parallel job queue (store first, enrich later)
  *
  * Used by: manual paste/generate, magazine open, recommend, history resume.
  */

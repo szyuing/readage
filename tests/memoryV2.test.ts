@@ -17,6 +17,7 @@ import {
   aggregateDailyEvidence,
   calculateDailyGrade,
   getArticleGrade,
+  updateDailyEvidence,
 } from '../src/lib/memoryV2/evidenceAggregation';
 import {
   calculateMemoryScore,
@@ -178,6 +179,64 @@ describe('Memory V2.2 - Evidence Aggregation', () => {
 
     const dailyEvidence = aggregateDailyEvidence([articleA]);
     assert.equal(dailyEvidence!.pendingGrade, null);
+  });
+
+  it('reopens a finalized day when late evidence arrives', () => {
+    const article: ArticleWordEvidence = {
+      userId: 'user1',
+      wordId: 'constraint',
+      articleId: 'article-A',
+      localDate: '2026-07-24',
+      validExposureCount: 1,
+      clickedOccurrenceCount: 0,
+      firstSeenAt: '2026-07-24T10:00:00Z',
+      lastSeenAt: '2026-07-24T10:00:00Z',
+    };
+    const finalized = {
+      ...aggregateDailyEvidence([article])!,
+      finalizedAt: '2026-07-25T00:00:00.000Z',
+    };
+
+    const updated = updateDailyEvidence(finalized, {
+      ...article,
+      clickedOccurrenceCount: 1,
+    });
+
+    assert.equal(updated.finalizedAt, null);
+    assert.equal(updated.pendingGrade, 'Again');
+  });
+});
+
+describe('Memory V2.2 - Defensive projections', () => {
+  it('maps malformed review timestamps to a safe new-word score', () => {
+    const malformed = {
+      ...initializeWordMemory('user1', 'broken'),
+      stability: 10,
+      lastReview: 'not-a-date',
+      fsrsCard: {
+        ...initializeWordMemory('user1', 'broken').fsrsCard,
+        reps: 1,
+      },
+    };
+
+    const score = calculateMemoryScore(malformed, DEFAULT_MS_PARAMS);
+    assert.equal(score, 0);
+    assert.equal(scoreToLevel(score), 0);
+  });
+
+  it('honors explicit zero and negative due-word limits', async () => {
+    const first = initializeWordMemory('user1', 'first');
+    const second = initializeWordMemory('user1', 'second');
+    const storage = {
+      async getAllMemoryStates() {
+        return [first, second];
+      },
+    } as unknown as MemoryStorage;
+    const system = new MemorySystemV2(storage);
+    const now = new Date(Date.now() + 1_000);
+
+    assert.equal((await system.getDueWords('user1', now, 0)).length, 0);
+    assert.equal((await system.getDueWords('user1', now, -1)).length, 0);
   });
 });
 

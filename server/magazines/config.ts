@@ -9,6 +9,7 @@ export const USER_AGENT = 'english-ai-active-reading-app';
 const MAX_ISSUES_PER_SOURCE = 30;
 const DEFAULT_GITHUB_API_TIMEOUT_MS = 15_000;
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000;
+const DEFAULT_WEB_SOURCE_TIMEOUT_MS = 30_000;
 const DEFAULT_DOWNLOAD_MAX_BYTES = 64 * 1024 * 1024;
 const SAFE_ISSUE_LABEL = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
 
@@ -41,6 +42,22 @@ export const MAGAZINE_SOURCES: MagazineSourceMeta[] = [
     levelHint: 'B2',
     topic: 'Technology',
   },
+  {
+    id: 'news_in_levels_a2',
+    provider: 'news_in_levels',
+    sourceUrl: 'https://www.newsinlevels.com/level/level-1/',
+    displayName: 'News in Levels - Level 1',
+    levelHint: 'A2',
+    topic: 'Graded News',
+  },
+  {
+    id: 'news_in_levels_b1',
+    provider: 'news_in_levels',
+    sourceUrl: 'https://www.newsinlevels.com/level/level-2/',
+    displayName: 'News in Levels - Level 2',
+    levelHint: 'B1',
+    topic: 'Graded News',
+  },
 ];
 
 function positiveIntegerFromEnv(name: string, fallback: number): number {
@@ -64,6 +81,10 @@ export function getGitHubApiTimeoutMs(): number {
 
 export function getMagazineDownloadTimeoutMs(): number {
   return positiveIntegerFromEnv('MAGAZINE_DOWNLOAD_TIMEOUT_MS', DEFAULT_DOWNLOAD_TIMEOUT_MS);
+}
+
+export function getMagazineWebSourceTimeoutMs(): number {
+  return positiveIntegerFromEnv('MAGAZINE_WEB_SOURCE_TIMEOUT_MS', DEFAULT_WEB_SOURCE_TIMEOUT_MS);
 }
 
 export function getMagazineDownloadMaxBytes(): number {

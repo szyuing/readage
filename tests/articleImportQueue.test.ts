@@ -178,7 +178,7 @@ test('queue processes multiple articles and invokes onComplete for each', async 
 });
 
 test('queue runs up to configured article concurrency', async () => {
-  assert.equal(ARTICLE_IMPORT_CONCURRENCY, 2);
+  assert.equal(ARTICLE_IMPORT_CONCURRENCY, 50);
 
   let inFlight = 0;
   let maxInFlight = 0;
@@ -244,7 +244,7 @@ test('queue runs up to configured article concurrency', async () => {
 
   assert.equal(completed.length, 5);
   assert.ok(maxInFlight <= 2, `maxInFlight=${maxInFlight}`);
-  assert.ok(maxInFlight >= 1, `expected concurrent articles, maxInFlight=${maxInFlight}`);
+  assert.ok(maxInFlight >= 2, `expected concurrent articles, maxInFlight=${maxInFlight}`);
   assert.equal(queue.getSnapshot().pendingCount, 0);
   assert.ok(queue.getSnapshot().bannerMessage === null || !queue.getSnapshot().isProcessing);
 });

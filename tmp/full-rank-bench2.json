@@ -1,0 +1,74 @@
+{
+  "articles": 681,
+  "heavyExtractMs": 1966,
+  "fastExtractMs": 840,
+  "rankHeavyWith3kProficiencyMs": 115,
+  "rankFastWith3kProficiencyMs": 105,
+  "cachedLemmaRankOnlyMs": 109,
+  "filteredHeavy": 4,
+  "filteredFast": 5,
+  "topHeavy": [
+    {
+      "id": "mag:atlantic:2026.05.02:robert-rauschenbergs-penchant-for-invention-and-spectacle-7",
+      "score": 745.6,
+      "due": 21,
+      "learn": 91
+    },
+    {
+      "id": "mag:atlantic:2026.07.02:fromem-idaho-b-rollem-12",
+      "score": 562.5,
+      "due": 18,
+      "learn": 65
+    },
+    {
+      "id": "mag:atlantic:2026.06.02:ten-thousand-things-arising-13",
+      "score": 538.5,
+      "due": 17,
+      "learn": 66
+    },
+    {
+      "id": "mag:atlantic:2026.07.02:the-scrubbed-and-simple-moon-13",
+      "score": 277.5,
+      "due": 10,
+      "learn": 33
+    }
+  ],
+  "topFast": [
+    {
+      "id": "mag:atlantic:2026.05.02:robert-rauschenbergs-penchant-for-invention-and-spectacle-7",
+      "score": 745.6,
+      "due": 21,
+      "learn": 91
+    },
+    {
+      "id": "mag:atlantic:2026.05.02:byzantine-room-13",
+      "score": 607.6,
+      "due": 18,
+      "learn": 74
+    },
+    {
+      "id": "mag:atlantic:2026.07.02:fromem-idaho-b-rollem-12",
+      "score": 585,
+      "due": 20,
+      "learn": 66
+    },
+    {
+      "id": "mag:atlantic:2026.06.02:ten-thousand-things-arising-13",
+      "score": 537,
+      "due": 17,
+      "learn": 65
+    },
+    {
+      "id": "mag:atlantic:2026.07.02:the-scrubbed-and-simple-moon-13",
+      "score": 274.5,
+      "due": 10,
+      "learn": 33
+    }
+  ],
+  "topOverlap": 4,
+  "sizesKB": {
+    "heavyLemmaIndex": 4974,
+    "compactSharedVocab": 3509,
+    "vocabSize": 46979
+  }
+}

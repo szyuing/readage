@@ -8,7 +8,7 @@
  *   node scripts/batch-import-live.mjs
  *   node scripts/batch-import-live.mjs --live-limit=20
  *   node scripts/batch-import-live.mjs --live-limit=0   # offline analysis only
- *   node scripts/batch-import-live.mjs --concurrency=3
+ *   node scripts/batch-import-live.mjs --concurrency=50
  */
 import fs from 'fs';
 import path from 'path';
@@ -20,13 +20,15 @@ const ROOT = 'data/magazines/articles';
 const MAX_FULL_CHARS = 120_000;
 const MAX_PARAS_HARD = 400;
 const DEFAULT_LIVE_LIMIT = 15;
-const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 50;
 
 function parseArgs(argv) {
   const out = { liveLimit: DEFAULT_LIVE_LIMIT, concurrency: DEFAULT_CONCURRENCY };
   for (const a of argv) {
     if (a.startsWith('--live-limit=')) out.liveLimit = Number(a.split('=')[1]);
-    if (a.startsWith('--concurrency=')) out.concurrency = Number(a.split('=')[1]);
+    if (a.startsWith('--concurrency=')) {
+      out.concurrency = Math.max(1, Math.min(50, Number(a.split('=')[1])));
+    }
   }
   return out;
 }

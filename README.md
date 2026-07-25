@@ -38,8 +38,10 @@ GEMINI_API_KEY=your_key_here
 # STEP_API_KEY=your_step_key
 # STEP_BASE_URL=https://api.stepfun.com/step_plan/v1
 # STEP_CHAT_MODEL=step-3.7-flash
-# STEP_TRANSLATE_MODEL=step-3.7-flash
-# STEP_TRANSLATE_REASONING_EFFORT=low   # low | medium | high
+# DEEPSEEK_API_KEY=your_deepseek_key
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
+# DEEPSEEK_TRANSLATE_MODEL=deepseek-v4-flash   # article enrichment; thinking disabled
+# DEEPSEEK_ARTICLE_MAX_IN_FLIGHT=50              # translation + CEFR rating, max 2500
 # STEP_REALTIME_MODEL=stepaudio-2.5-realtime
 # STEP_REALTIME_URL=wss://api.stepfun.com/step_plan/v1/realtime
 # LLM_PROVIDER=step
@@ -53,7 +55,7 @@ npm run dev
 
 ### 外刊杂志（Library → 外刊杂志）
 
-从 [awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks) **定期/手动导入并解析**经济学人、纽约客、大西洋月刊、Wired：
+从 [awesome-english-ebooks](https://github.com/hehonghui/awesome-english-ebooks) **定期/手动导入并解析**经济学人、纽约客、大西洋月刊、Wired；同时从 [News in Levels](https://www.newsinlevels.com/) 导入 A2 Level 1 与 B1 Level 2 分级新闻：
 
 1. 打开 **文章库 → 外刊杂志**
 2. 点击 **同步外刊**（或等待定时任务）

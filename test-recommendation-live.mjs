@@ -10,9 +10,10 @@ import { LIBRARY_ARTICLES } from './src/data/mockArticles.ts';
 console.log('🧪 开始测试 Memory V2.2 推荐系统...\n');
 
 // 初始化 Memory V2.2
-await memoryV2.initialize();
-const system = memoryV2.getSystem();
-const userId = 'test-user';
+const store = memoryV2.getStore();
+await store.ensureReady();
+const system = store.system;
+const userId = store.userId;
 
 // 1. 检查用户当前状态
 console.log('📊 1. 用户熟练度状态');

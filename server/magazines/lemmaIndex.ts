@@ -23,7 +23,7 @@ export interface MagazineLemmaIndexArticle {
 }
 
 export interface MagazineLemmaIndex {
-  version: 1;
+  version: number;
   fingerprint: string;
   builtAt: string;
   articleCount: number;
@@ -33,7 +33,8 @@ export interface MagazineLemmaIndex {
   buildMs?: number;
 }
 
-const INDEX_VERSION = 1 as const;
+// Bump when lemma extraction changes so persisted indexes are rebuilt.
+const INDEX_VERSION = 2 as const;
 let memoryCache: MagazineLemmaIndex | null = null;
 let buildInflight: Promise<MagazineLemmaIndex> | null = null;
 

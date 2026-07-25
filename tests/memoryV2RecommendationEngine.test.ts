@@ -178,6 +178,30 @@ describe('RecommendationEngine cold-start filtering', () => {
     assert.ok(ranked[0]!.score > ranked[1]!.score);
     assert.match(ranked[0]!.reason, /冷启动|匹配/);
   });
+
+  it('keeps a due-word article ahead of low-coverage cold-start candidates', () => {
+    const proficiencyMap = new Map<string, WordProficiencyView>([
+      ['due', proficiency('due', 1, '2020-01-01T00:00:00.000Z')],
+      ...Array.from({ length: 5 }, (_, index) => {
+        const wordId = `mastered-${index}`;
+        return [wordId, proficiency(wordId, 4)] as const;
+      }),
+    ]);
+    const ranked = new RecommendationEngine().recommend(
+      [
+        candidate('due-article', ['due']),
+        candidate('untracked-article', ['untracked']),
+      ],
+      proficiencyMap,
+      2,
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    assert.deepEqual(
+      ranked.map((item) => item.articleId),
+      ['due-article', 'untracked-article'],
+    );
+  });
 });
 
 describe('review hit-rate ranking', () => {
@@ -185,6 +209,11 @@ describe('review hit-rate ranking', () => {
     const lemmas = ['target', 'target', 'target', 'other'];
     assert.equal(countUniqueReviewHits(lemmas, new Set(['target', 'miss'])), 1);
     assert.equal(countUniqueReviewHits(lemmas, ['target', 'other']), 2);
+  });
+
+  it('normalizes review targets before matching article lemmas', () => {
+    assert.equal(countUniqueReviewHits(["cambodia's"], ['Cambodia’s']), 1);
+    assert.equal(countUniqueReviewHits(['well being'], ['well-being']), 1);
   });
 
   it('prefers articles that cover more distinct review words over longer single-word spam', () => {

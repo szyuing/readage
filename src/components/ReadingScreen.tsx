@@ -35,9 +35,8 @@ import { needsImportEnrichment } from '../lib/articleImport';
 import { classifyArticleParagraph } from '../lib/articlePresentation';
 import {
   buildReadingAdvancePayload,
-  countArticleWords,
+  hasArticleExitedViewport,
   isLeftSwipeGesture,
-  minDwellMsBeforeAutoAdvance,
 } from '../lib/continuousReading';
 import { useMemoryV2Integration } from '../lib/memoryV2Integration';
 import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
@@ -62,11 +61,13 @@ interface ReadingScreenProps {
   /** Open the parent article this rewrite was based on. */
   onOpenParentArticle?: () => void;
   onBack: () => void;
-  onWordClick?: (word: string) => void;
-  onGrammarQuery?: (wordOrPhrase: string) => void;
+  onWordClick?: (word: string, articleId?: string) => void;
+  onGrammarQuery?: (wordOrPhrase: string, articleId?: string) => void;
   onExposures?: (words: string[]) => void;
   onReadingComplete?: () => void;
   mode?: ReadingMode;
+  /** Articles rendered as one continuous recommendation reading stream. */
+  continuousArticles?: Article[];
   onAdvance?: (payload: ReadingAdvancePayload) => void;
   /** Structured discussion assessment -> production updates. */
   onDiscussionAssessed?: (text: string, result: StructuredAssessResult) => void;
@@ -89,6 +90,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   onExposures,
   onReadingComplete,
   mode = 'single',
+  continuousArticles,
   onAdvance,
   onDiscussionAssessed,
   initialChatMessages = [],
@@ -150,10 +152,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const onAdvanceRef = useRef(onAdvance);
   const hasAdvancedRef = useRef(false);
   const suppressNextWordClickRef = useRef(false);
-  const rightSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
-  /** Wall-clock when the current article became active — gates auto-advance. */
-  const articleOpenedAtRef = useRef(Date.now());
+  const completedContinuousArticleIdsRef = useRef(new Set<string>());
+  const continuousArticlesRef = useRef(continuousArticles);
+
+  useEffect(() => {
+    continuousArticlesRef.current = continuousArticles;
+  }, [continuousArticles]);
 
   useEffect(() => {
     return () => {
@@ -176,7 +181,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   useEffect(() => {
     hasAdvancedRef.current = false;
     exposedLemmasRef.current = new Set();
-    articleOpenedAtRef.current = Date.now();
+    completedContinuousArticleIdsRef.current.clear();
     setArticleVisible(false);
     const frame = window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'auto' });
@@ -203,7 +208,6 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (!container || typeof IntersectionObserver === 'undefined') return;
 
     let isActive = true;
-    let autoAdvanceTimer: number | null = null;
     const visibleParagraphs = new Set<Element>();
     const completedParagraphs = new Set<Element>();
     const exposureTimers = new Map<Element, number>();
@@ -216,41 +220,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       exposureTimers.delete(paragraph);
     };
 
-    const clearAutoAdvanceTimer = () => {
-      if (autoAdvanceTimer === null) return;
-      window.clearTimeout(autoAdvanceTimer);
-      autoAdvanceTimer = null;
-    };
-
-    const finishReading = () => {
-      if (!isActive || hasAdvancedRef.current) return;
+    const finishSingleReading = () => {
+      if (!isActive || hasAdvancedRef.current || mode === 'recommendation-feed') return;
       hasAdvancedRef.current = true;
-      clearAutoAdvanceTimer();
-      if (mode === 'recommendation-feed') {
-        onAdvanceRef.current?.(
-          buildReadingAdvancePayload(article.id, 'completed', exposedLemmasRef.current)
-        );
-      } else {
-        onReadingCompleteRef.current?.();
-      }
-    };
-
-    const scheduleFinishReading = () => {
-      if (!isActive || hasAdvancedRef.current || autoAdvanceTimer !== null) return;
-      if (mode !== 'recommendation-feed') {
-        finishReading();
-        return;
-      }
-      // Prevent short on-screen articles from auto-skipping after ~800ms.
-      const wordCount = countArticleWords(article.content);
-      const minDwell = minDwellMsBeforeAutoAdvance(wordCount);
-      const elapsed = Date.now() - articleOpenedAtRef.current;
-      const remaining = Math.max(0, minDwell - elapsed);
-      if (remaining > 0) {
-        autoAdvanceTimer = window.setTimeout(finishReading, remaining);
-      } else {
-        finishReading();
-      }
+      onReadingCompleteRef.current?.();
     };
 
     const observer = new IntersectionObserver(
@@ -286,7 +259,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             ) return;
 
             const paragraphIndex = Number(paragraph.dataset.readingParagraph);
-            const paragraphText = article.content[paragraphIndex] ?? paragraph.textContent ?? '';
+            const paragraphArticleId = paragraph.dataset.readingArticleId || article.id;
+            const paragraphArticle = paragraphArticleId === article.id
+              ? article
+              : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
+            const paragraphText = paragraphArticle?.content[paragraphIndex] ?? paragraph.textContent ?? '';
             const learningUnits = extractLearningUnits(paragraphText, highlightTerms);
             const newWordIds = [...new Set(
               learningUnits.map((unit) => unit.wordId),
@@ -298,7 +275,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             visibleParagraphs.delete(paragraph);
 
             // Memory V2.2: 记录段落曝光
-            if (learningUnits.length > 0) {
+            if (learningUnits.length > 0 && paragraphArticleId === article.id) {
               recordParagraphExposure(paragraphIndex, learningUnits).catch(err =>
                 console.error('Memory V2.2 exposure recording failed:', err)
               );
@@ -308,11 +285,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               onExposuresRef.current?.(newWordIds);
             }
             if (
-              paragraphs.length > 0
+              mode === 'single'
+              && paragraphs.length > 0
               && completedParagraphs.size === paragraphs.length
-              && !hasAdvancedRef.current
             ) {
-              scheduleFinishReading();
+              finishSingleReading();
             }
           }, 800);
 
@@ -350,17 +327,74 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       observer.disconnect();
       pauseExposureTracking();
-      clearAutoAdvanceTimer();
       completedParagraphs.clear();
     };
     // The exposure set intentionally resets only when the article lifecycle changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id, mode]);
 
+  // Recommendation pages advance when the reader explicitly reaches the end.
+  // Paragraph visibility still records exposure, but never changes the article
+  // before the reader has scrolled through it.
+  useEffect(() => {
+    if (mode !== 'recommendation-feed') return;
+
+    let ticking = false;
+    const checkScrollEnd = () => {
+      ticking = false;
+      if (hasAdvancedRef.current || document.visibilityState !== 'visible') return;
+      const sections = contentRef.current?.querySelectorAll<HTMLElement>('[data-reading-article-section]');
+      if (!sections) return;
+      let completedOne = false;
+      sections.forEach((section) => {
+        if (completedOne) return;
+        const articleId = section.dataset.readingArticleId;
+        if (!articleId || completedContinuousArticleIdsRef.current.has(articleId)) return;
+        const lastParagraph = section.querySelector('[data-reading-last-paragraph="true"]') as HTMLElement | null;
+        if (!lastParagraph || !hasArticleExitedViewport(lastParagraph.getBoundingClientRect().bottom)) return;
+        completedContinuousArticleIdsRef.current.add(articleId);
+        completedOne = true;
+        const exposed = articleId === article.id ? exposedLemmasRef.current : new Set<string>();
+        onAdvanceRef.current?.(
+          buildReadingAdvancePayload(articleId, 'completed', exposed)
+        );
+      });
+    };
+    const handleScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(checkScrollEnd);
+    };
+
+    // Capture catches browsers that dispatch scrolling on the document's
+    // scrolling element instead of window. touchend covers short final drags.
+    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('wheel', handleScroll, { passive: true });
+    window.addEventListener('touchend', handleScroll, { passive: true });
+    return () => {
+      document.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('wheel', handleScroll);
+      window.removeEventListener('touchend', handleScroll);
+    };
+  }, [article.id, mode, continuousArticles]);
+
   const highlightTerms = [
     ...(article.keyWords || []),
     ...(article.embeddedReviewWords || []),
   ];
+  const reviewWords: string[] = Array.from(
+    new Set((article.embeddedReviewWords || []).map((word) => word.trim()).filter(Boolean)),
+  );
+  const currentLastParagraphIndex = article.content.reduce(
+    (lastIndex, paragraph, index) =>
+      classifyArticleParagraph(paragraph, article.title) === 'furniture' ? lastIndex : index,
+    -1,
+  );
+  const continuationArticleList = mode === 'recommendation-feed'
+    ? (continuousArticles || []).filter((candidate) => candidate.id !== article.id)
+    : [];
 
   const closeWordCard = useCallback(() => {
     wordCardAbortRef.current?.abort();
@@ -371,7 +405,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   }, []);
 
   const openWordCard = useCallback(
-    async (wordOrPhrase: string, contextSentence = '') => {
+    async (wordOrPhrase: string, contextSentence = '', contextArticle: Article = article) => {
       const request = createWordCardRequest(wordOrPhrase, contextSentence);
       if (!request) return;
 
@@ -384,11 +418,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       setWordCardOpen(true);
       setIsExplaining(true);
       setGrammarResult(null);
-      onGrammarQuery?.(request.selectedText);
+      onGrammarQuery?.(request.selectedText, contextArticle.id);
 
       try {
         const result = await fetchWordCard(request, {
-          articleId: article.id,
+          articleId: contextArticle.id,
           signal: controller.signal,
         });
         if (controller.signal.aborted) return;
@@ -402,7 +436,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         }
       }
     },
-    [article.id, onGrammarQuery],
+    [article, onGrammarQuery],
   );
 
   const handleWordClick = (
@@ -410,6 +444,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     paragraph: string,
     tokenIndex: number,
     e: React.MouseEvent,
+    readingArticle: Article = article,
+    readingHighlightTerms: string[] = highlightTerms,
   ) => {
     // Right-click is reserved for copy-and-quote; never open a word card from it.
     if (e.button !== 0 && e.nativeEvent.button !== 0) return;
@@ -424,16 +460,16 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (!request) return;
     const cleanWord = request.selectedText;
 
-    onWordClick?.(cleanWord);
+    onWordClick?.(cleanWord, readingArticle.id);
 
     // Memory V2.2: 记录单词点击
     const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph]');
     const learningUnit = findLearningUnitAtTokenIndex(
       paragraph,
-      highlightTerms,
+      readingHighlightTerms,
       tokenIndex,
     );
-    if (paragraphElement && learningUnit) {
+    if (paragraphElement && learningUnit && readingArticle.id === article.id) {
       const paragraphIndex = Number(paragraphElement.getAttribute('data-reading-paragraph'));
 
       recordWordClick(learningUnit, paragraphIndex).catch(err =>
@@ -441,7 +477,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       );
     }
 
-    void openWordCard(cleanWord, paragraph);
+    void openWordCard(cleanWord, paragraph, readingArticle);
   };
 
   const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -619,6 +655,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (
       mode !== 'recommendation-feed'
+      || Boolean(continuousArticles?.length)
       || !event.isPrimary
       || !['touch', 'pen'].includes(event.pointerType)
       || shouldIgnoreSwipeTarget(event.target)
@@ -633,6 +670,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     swipeStartRef.current = null;
     if (
       mode !== 'recommendation-feed'
+      || Boolean(continuousArticles?.length)
       || !start
       || start.pointerId !== event.pointerId
       || hasAdvancedRef.current
@@ -672,7 +710,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     >
       {showNavigationHint && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-full bg-[#2C2723]/90 px-4 py-2 text-xs font-medium text-white shadow-lg pointer-events-none">
-          下滑阅读 · 左滑下一篇
+          上下滑动阅读
         </div>
       )}
 
@@ -848,11 +886,49 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           </div>
         )}
 
-        {article.embeddedReviewWords && article.embeddedReviewWords.length > 0 && (
-          <div className="mb-4 p-3 bg-[#FEF3C7] border border-[#FDE68A] rounded-xl text-xs text-[#92400E]">
-            <span className="font-semibold">语境复习词：</span>
-            {article.embeddedReviewWords.join(' · ')}
-          </div>
+        {reviewWords.length > 0 && (
+          <section className="review-word-strip mb-7" aria-labelledby="review-word-strip-title">
+            <div className="mb-2 flex items-center justify-between gap-3 px-1">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="review-word-strip__icon" aria-hidden="true">
+                  <BookOpen className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 id="review-word-strip-title" className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#6B645B]">
+                    Focus words
+                  </h2>
+                  <p className="text-[11px] text-[#9A9185]">{reviewWords.length} in this article</p>
+                </div>
+              </div>
+              <span className="hidden shrink-0 text-[11px] font-medium text-[#A59C90] sm:inline">
+                Vocabulary set
+              </span>
+            </div>
+            <div className="review-word-strip__viewport">
+              <div className="review-word-strip__fade review-word-strip__fade--left" aria-hidden="true" />
+              <ul className="review-word-strip__track" aria-label="Review words">
+                {reviewWords.map((word) => (
+                  <li key={word} className="shrink-0">
+                    <button
+                      type="button"
+                      className="review-word-chip"
+                      onClick={() => {
+                        const context = article.content.find((paragraph) =>
+                          paragraph.toLowerCase().includes(word.toLowerCase()),
+                        ) || article.content[0] || '';
+                        onWordClick?.(word);
+                        void openWordCard(word, context);
+                      }}
+                    >
+                      <span className="review-word-chip__dot" aria-hidden="true" />
+                      <span>{word}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="review-word-strip__fade review-word-strip__fade--right" aria-hidden="true" />
+            </div>
+          </section>
         )}
 
         {(importJob?.status === 'queued'
@@ -938,7 +1014,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           onMouseUp={handleTextSelection}
           className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
         >
-          {article.content.map((paragraph, pIdx) => {
+          <section data-reading-article-section={article.id} data-reading-article-id={article.id}>
+            {article.content.map((paragraph, pIdx) => {
             const paragraphKind = classifyArticleParagraph(paragraph, article.title);
             if (paragraphKind === 'furniture') return null;
 
@@ -986,6 +1063,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 {paragraphKind === 'title' ? (
                   <h2
                     data-reading-paragraph={pIdx}
+                    data-reading-article-id={article.id}
+                    data-reading-last-paragraph={pIdx === currentLastParagraphIndex ? 'true' : undefined}
                     className="font-serif text-2xl sm:text-3xl font-bold leading-tight tracking-normal text-[#2A2621]"
                   >
                     {wordSpans}
@@ -993,6 +1072,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 ) : (
                   <p
                     data-reading-paragraph={pIdx}
+                    data-reading-article-id={article.id}
+                    data-reading-last-paragraph={pIdx === currentLastParagraphIndex ? 'true' : undefined}
                     className={
                       paragraphKind === 'author'
                         ? 'font-sans text-sm sm:text-base font-bold leading-relaxed tracking-normal text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
@@ -1008,6 +1089,108 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   </p>
                 )}
               </div>
+            );
+            })}
+          </section>
+
+          {continuationArticleList.map((nextArticle) => {
+            const nextLastParagraphIndex = nextArticle.content.reduce(
+              (lastIndex, paragraph, index) =>
+                classifyArticleParagraph(paragraph, nextArticle.title) === 'furniture' ? lastIndex : index,
+              -1,
+            );
+            return (
+              <section
+                key={nextArticle.id}
+                data-reading-article-section={nextArticle.id}
+                data-reading-article-id={nextArticle.id}
+                className="mt-10 border-t border-[#E7E2D5] pt-8"
+              >
+                <header className="mb-8">
+                  <h2
+                    data-reading-article-title="true"
+                    className="font-serif text-2xl sm:text-3xl font-bold leading-tight text-[#2A2621]"
+                  >
+                    {nextArticle.title}
+                  </h2>
+                  {(nextArticle.levelRating?.level || nextArticle.level || nextArticle.source) && (
+                    <p className="mt-2 text-[10px] text-[#8C8478]">
+                      {nextArticle.levelRating?.level || nextArticle.level
+                        ? `CEFR ${nextArticle.levelRating?.level || nextArticle.level}`
+                        : null}
+                      {(nextArticle.levelRating?.level || nextArticle.level) && nextArticle.source ? ' · ' : null}
+                      {nextArticle.source || null}
+                    </p>
+                  )}
+                </header>
+                <div className="space-y-8">
+                  {nextArticle.content.map((paragraph, pIdx) => {
+                    const paragraphKind = classifyArticleParagraph(paragraph, nextArticle.title);
+                    if (paragraphKind === 'furniture') return null;
+                    const words = paragraph.trim().split(/\s+/);
+                    const nextHighlightTerms = [
+                      ...(nextArticle.keyWords || []),
+                      ...(nextArticle.embeddedReviewWords || []),
+                    ];
+                    const highlightMatches = getPhraseHighlightMatches(words, nextHighlightTerms);
+                    const wordSpans = words.map((word, wIdx) => {
+                      const matchedTerm = highlightMatches[wIdx];
+                      return (
+                        <React.Fragment key={wIdx}>
+                          <span
+                            onClick={(e) => handleWordClick(
+                              matchedTerm || word,
+                              paragraph,
+                              wIdx,
+                              e,
+                              nextArticle,
+                              nextHighlightTerms,
+                            )}
+                            className={matchedTerm
+                              ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
+                              : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'}
+                            title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
+                          >
+                            {word}
+                          </span>
+                          {wIdx < words.length - 1 ? ' ' : null}
+                        </React.Fragment>
+                      );
+                    });
+                    const translation = nextArticle.paragraphTranslations?.[pIdx];
+                    return (
+                      <div key={pIdx} className="space-y-2">
+                        {paragraphKind === 'title' ? (
+                          <h3
+                            data-reading-paragraph={pIdx}
+                            data-reading-article-id={nextArticle.id}
+                            data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
+                            className="font-serif text-xl sm:text-2xl font-bold leading-tight text-[#2A2621]"
+                          >
+                            {wordSpans}
+                          </h3>
+                        ) : (
+                          <p
+                            data-reading-paragraph={pIdx}
+                            data-reading-article-id={nextArticle.id}
+                            data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
+                            className={paragraphKind === 'author'
+                              ? 'font-sans text-sm sm:text-base font-bold leading-relaxed text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
+                              : 'tracking-normal'}
+                          >
+                            {wordSpans}
+                          </p>
+                        )}
+                        {showParagraphTranslations && translation && (
+                          <p className="font-sans text-[0.85em] leading-relaxed text-[#6B645B] bg-[#F3F0E8] border border-[#E7E2D5] rounded-xl px-3 py-2.5">
+                            {translation}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
             );
           })}
         </div>

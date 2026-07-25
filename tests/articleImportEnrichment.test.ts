@@ -87,7 +87,7 @@ test('planImportEnrichment only requests missing steps', async () => {
 });
 
 test('mapPool respects concurrency and preserves order', async () => {
-  assert.equal(IMPORT_LIMITS.TRANSLATE_CONCURRENCY, 4);
+  assert.equal(IMPORT_LIMITS.TRANSLATE_CONCURRENCY, 2);
   assert.equal(IMPORT_LIMITS.MAX_FULL_ARTICLE_TRANSLATE_CHARS, 120_000);
   let inFlight = 0;
   let maxInFlight = 0;
@@ -310,7 +310,7 @@ test('enrichArticleOnImport falls back to paragraph pool when full-article misma
   assert.equal(calls.filter((c) => (c as { intent: string }).intent === 'translate').length, 5);
   assert.ok(maxTranslateInFlight <= 4);
   assert.ok(maxTranslateInFlight >= 2);
-  assert.equal(IMPORT_LIMITS.TRANSLATE_CONCURRENCY, 4);
+  assert.equal(IMPORT_LIMITS.TRANSLATE_CONCURRENCY, 2);
 });
 
 test('article under 120k chars uses full-article even with many paragraphs', async () => {
@@ -363,7 +363,7 @@ test('article under 120k chars uses full-article even with many paragraphs', asy
   assert.equal(result.paragraphTranslations.length, 50);
 });
 
-test('oversized article (>120k chars) skips full-article and uses 4-way paragraph pool', async () => {
+test('oversized article (>120k chars) skips full-article and uses 2-way paragraph pool', async () => {
   let fullArticleCalls = 0;
   let translateInFlight = 0;
   let maxTranslateInFlight = 0;
@@ -420,7 +420,7 @@ test('oversized article (>120k chars) skips full-article and uses 4-way paragrap
   assert.equal(result.translateMode, 'paragraph_pool');
   assert.equal(result.paragraphTranslations.length, paragraphs.length);
   assert.ok(maxTranslateInFlight <= 4);
-  assert.ok(maxTranslateInFlight >= 2, `expected 4-way pool, max=${maxTranslateInFlight}`);
+  assert.ok(maxTranslateInFlight >= 2, `expected 2-way pool, max=${maxTranslateInFlight}`);
 });
 
 

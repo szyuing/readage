@@ -8,6 +8,16 @@ export interface SwipeCoordinates {
   endY: number;
 }
 
+export interface ScrollEndCoordinates {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+}
+
+export function hasArticleExitedViewport(lastParagraphBottom: number, viewportTop = 0): boolean {
+  return Number.isFinite(lastParagraphBottom) && lastParagraphBottom <= viewportTop;
+}
+
 export function isLeftSwipeGesture(
   coordinates: SwipeCoordinates,
   minimumDistance = 64,
@@ -19,6 +29,21 @@ export function isLeftSwipeGesture(
   const verticalDistance = Math.abs(deltaY);
   return deltaX <= -minimumDistance
     && horizontalDistance > verticalDistance * horizontalDominance;
+}
+
+/**
+ * Auto-advance only after a real scrollable article reaches its end and the
+ * reader has spent the minimum amount of time on it.
+ */
+export function canAutoAdvanceAtScrollEnd(
+  coordinates: ScrollEndCoordinates,
+  elapsedMs: number,
+  minimumDwellMs: number,
+  tolerance = 48
+): boolean {
+  if (coordinates.scrollHeight <= coordinates.clientHeight) return false;
+  if (elapsedMs < minimumDwellMs) return false;
+  return coordinates.scrollTop + coordinates.clientHeight >= coordinates.scrollHeight - tolerance;
 }
 
 /**

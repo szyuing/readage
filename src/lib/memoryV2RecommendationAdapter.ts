@@ -16,6 +16,7 @@ import {
 } from './memoryV2/recommendation';
 import { memoryV2 } from './memoryV2/hooks';
 import { getNewLemmas } from './readingExposure';
+import { toLemma } from './proficiency';
 import type { WordProficiencyView } from './memoryV2/memorySystem';
 import {
   projectBandsOntoCatalog,
@@ -287,7 +288,7 @@ export class MemoryV2RecommendationAdapter {
       ? Array.from(
           new Set(
             targetWordsOrCount
-              .map(word => word.trim().toLowerCase())
+              .map(toLemma)
               .filter(Boolean)
           )
         )
@@ -440,7 +441,7 @@ export async function rankMagazineLemmaCandidates(
   if (reviewWords.length > 0) {
     // Prefer articles containing target review lemmas, then score.
     const target = new Set(
-      reviewWords.map((w) => w.trim().toLowerCase()).filter(Boolean)
+      reviewWords.map(toLemma).filter(Boolean)
     );
     const hitById = new Map<string, number>();
     const withTargets = filtered

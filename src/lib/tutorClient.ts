@@ -34,19 +34,29 @@ export interface TutorPostOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Step Plan concurrent request limit is ~10 (returns 429 when exceeded).
- * Keep a global client-side budget under that so multi-article, multi-paragraph
- * imports cannot stampede the API.
- */
-export const TUTOR_MAX_IN_FLIGHT = 6;
+/** Keep interactive/non-article requests isolated from batch enrichment. */
+export const TUTOR_MAX_IN_FLIGHT = 3;
+/** DeepSeek V4 Flash article enrichment target; the account limit is 2500. */
+export const DEEPSEEK_ARTICLE_MAX_IN_FLIGHT = 50;
+/** Backward-compatible name for callers that only enqueue translations. */
+export const DEEPSEEK_TRANSLATION_MAX_IN_FLIGHT = DEEPSEEK_ARTICLE_MAX_IN_FLIGHT;
 
 interface QueueEntry {
   grant: () => void;
 }
 
-let inFlight = 0;
-const waitQueue: QueueEntry[] = [];
+interface RequestPool {
+  limit: number;
+  inFlight: number;
+  waitQueue: QueueEntry[];
+}
+
+const generalPool: RequestPool = { limit: TUTOR_MAX_IN_FLIGHT, inFlight: 0, waitQueue: [] };
+const translationPool: RequestPool = {
+  limit: DEEPSEEK_ARTICLE_MAX_IN_FLIGHT,
+  inFlight: 0,
+  waitQueue: [],
+};
 
 function createAbortError(): Error {
   const error = new Error('Aborted');
@@ -54,10 +64,17 @@ function createAbortError(): Error {
   return error;
 }
 
-async function acquireSlot(signal?: AbortSignal): Promise<void> {
+function poolForIntent(intent: TutorRequest['intent']): RequestPool {
+  return intent === 'translate' || intent === 'translate_article' || intent === 'rate_article'
+    ? translationPool
+    : generalPool;
+}
+
+async function acquireSlot(intent: TutorRequest['intent'], signal?: AbortSignal): Promise<void> {
+  const pool = poolForIntent(intent);
   if (signal?.aborted) throw createAbortError();
-  if (inFlight < TUTOR_MAX_IN_FLIGHT) {
-    inFlight += 1;
+  if (pool.inFlight < pool.limit) {
+    pool.inFlight += 1;
     return;
   }
 
@@ -69,8 +86,8 @@ async function acquireSlot(signal?: AbortSignal): Promise<void> {
     const onAbort = () => {
       if (settled) return;
       settled = true;
-      const index = waitQueue.indexOf(entry);
-      if (index >= 0) waitQueue.splice(index, 1);
+      const index = pool.waitQueue.indexOf(entry);
+      if (index >= 0) pool.waitQueue.splice(index, 1);
       cleanup();
       reject(createAbortError());
     };
@@ -80,20 +97,21 @@ async function acquireSlot(signal?: AbortSignal): Promise<void> {
         if (settled) return;
         settled = true;
         cleanup();
-        inFlight += 1;
+        pool.inFlight += 1;
         resolve();
       },
     };
 
-    waitQueue.push(entry);
+    pool.waitQueue.push(entry);
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted) onAbort();
   });
 }
 
-function releaseSlot(): void {
-  inFlight = Math.max(0, inFlight - 1);
-  const next = waitQueue.shift();
+function releaseSlot(intent: TutorRequest['intent']): void {
+  const pool = poolForIntent(intent);
+  pool.inFlight = Math.max(0, pool.inFlight - 1);
+  const next = pool.waitQueue.shift();
   if (next) next.grant();
 }
 
@@ -184,7 +202,7 @@ async function postTutorOnce<T>(
   }, timeoutMs);
 
   try {
-    await acquireSlot(controller.signal);
+    await acquireSlot(request.intent, controller.signal);
     acquired = true;
     const response = await waitForAbort(fetcher('/api/tutor', {
       method: 'POST',
@@ -233,7 +251,7 @@ async function postTutorOnce<T>(
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener('abort', onExternalAbort);
-    if (acquired) releaseSlot();
+    if (acquired) releaseSlot(request.intent);
   }
 }
 
@@ -286,6 +304,6 @@ export async function postTutor<T>(
 }
 
 /** Test helper */
-export function __tutorInFlightForTests(): number {
-  return inFlight;
+export function __tutorInFlightForTests(intent?: TutorRequest['intent']): number {
+  return poolForIntent(intent || 'rate_article').inFlight;
 }

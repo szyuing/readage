@@ -26,3 +26,61 @@ test('tutor client rejects both HTTP and envelope errors', async () => {
     /Nope/
   );
 });
+
+test('translation requests can use 50 client-side slots', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const fetcher: typeof fetch = async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active -= 1;
+    return new Response(
+      JSON.stringify({ ok: true, intent: 'translate', result: { translatedText: '译' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await Promise.all(
+    Array.from({ length: 55 }, (_, index) =>
+      postTutor(
+        { intent: 'translate', selectedText: `article-${index}` },
+        fetcher,
+        { maxRetries: 0 }
+      )
+    )
+  );
+
+  assert.equal(maxActive, 50);
+});
+
+test('article rating requests share the 50-slot DeepSeek pool', async () => {
+  let active = 0;
+  let maxActive = 0;
+  const fetcher: typeof fetch = async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active -= 1;
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        intent: 'rate_article',
+        result: { level: 'B1', difficultyScore: 40, summary: 'ok' },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await Promise.all(
+    Array.from({ length: 55 }, (_, index) =>
+      postTutor(
+        { intent: 'rate_article', articleContext: `article-${index}` },
+        fetcher,
+        { maxRetries: 0 }
+      )
+    )
+  );
+
+  assert.equal(maxActive, 50);
+});
