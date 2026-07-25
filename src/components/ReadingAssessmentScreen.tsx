@@ -22,6 +22,7 @@ import {
   type DictionaryEntry,
 } from "../lib/dictionaryClient";
 import "./readingAssessment.css";
+import { ReadAgeBrand } from './ReadAgeBrand';
 
 type Stage =
   | "questionnaire"
@@ -390,20 +391,9 @@ export const ReadingAssessmentScreen: React.FC<ReadingAssessmentScreenProps> = (
       <div className="ambient ambient-two" />
 
       <header className="site-header">
-        <button className="brand" onClick={restart} aria-label="回到测试首页">
-          <span className="brand-mark">i+1</span>
-          <span>
-            <strong>英语测试</strong>
-            <small>CEFR 阅读定级</small>
-          </span>
+        <button className="readage-assessment-brand" onClick={restart} aria-label="回到测试首页">
+          <ReadAgeBrand logoClassName="h-9 w-9" nameClassName="text-lg" />
         </button>
-        <div className="header-note" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span className="live-dot" />
-          <span>Rule-based MVP</span>
-          <button type="button" className="text-button" onClick={onBack}>
-            返回应用
-          </button>
-        </div>
       </header>
 
       <nav className="progress" aria-label="测试进度">

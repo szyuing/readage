@@ -1,4 +1,5 @@
 export type AppRoute =
+  | { kind: 'landing' }
   | { kind: 'recommendation' }
   | { kind: 'reading'; articleId: string }
   | { kind: 'library' }
@@ -34,7 +35,8 @@ export function withAppHistoryIndex(state: unknown, index: number): Record<strin
 }
 
 const SIMPLE_ROUTE_PATHS = {
-  recommendation: '/',
+  landing: '/',
+  recommendation: '/recommend',
   library: '/library',
   assessment: '/assessment',
   learning: '/learning',
@@ -57,18 +59,18 @@ export function parseAppPath(pathname: string): AppRoute {
   if (path.startsWith('/read/')) {
     const encodedArticleId = path.slice('/read/'.length);
     if (!encodedArticleId || encodedArticleId.includes('/')) {
-      return { kind: 'recommendation' };
+      return { kind: 'landing' };
     }
 
     try {
       const articleId = decodeURIComponent(encodedArticleId);
-      return articleId ? { kind: 'reading', articleId } : { kind: 'recommendation' };
+      return articleId ? { kind: 'reading', articleId } : { kind: 'landing' };
     } catch {
-      return { kind: 'recommendation' };
+      return { kind: 'landing' };
     }
   }
 
-  return { kind: 'recommendation' };
+  return { kind: 'landing' };
 }
 
 export function buildAppPath(route: AppRoute): string {
@@ -78,18 +80,10 @@ export function buildAppPath(route: AppRoute): string {
   return SIMPLE_ROUTE_PATHS[route.kind];
 }
 
-/**
- * First-time users (no CEFR assessment yet) land on the rating flow
- * instead of auto-starting the recommendation feed.
- * Deep links (library / reading / assessment / …) are left alone.
- */
+/** The public landing page remains the root route for every visitor. */
 export function resolveInitialAppRoute(
   pathname: string,
-  hasCompletedAssessment: boolean
+  _hasCompletedAssessment: boolean
 ): AppRoute {
-  const route = parseAppPath(pathname);
-  if (!hasCompletedAssessment && route.kind === 'recommendation') {
-    return { kind: 'assessment' };
-  }
-  return route;
+  return parseAppPath(pathname);
 }

@@ -8,8 +8,9 @@ import {
   withAppHistoryIndex,
 } from '../src/lib/appRoutes';
 
-test('parses the recommendation entry and supported page paths', () => {
-  assert.deepEqual(parseAppPath('/'), { kind: 'recommendation' });
+test('parses the landing, recommendation entry, and supported page paths', () => {
+  assert.deepEqual(parseAppPath('/'), { kind: 'landing' });
+  assert.deepEqual(parseAppPath('/recommend'), { kind: 'recommendation' });
   assert.deepEqual(parseAppPath('/library'), { kind: 'library' });
   assert.deepEqual(parseAppPath('/assessment'), { kind: 'assessment' });
   assert.deepEqual(parseAppPath('/learning'), { kind: 'learning' });
@@ -23,23 +24,24 @@ test('round-trips encoded article ids', () => {
   assert.deepEqual(parseAppPath(buildAppPath(route)), route);
 });
 
-test('normalizes trailing slashes and falls back unknown paths to recommendation', () => {
+test('normalizes trailing slashes and falls back unknown paths to landing', () => {
   assert.deepEqual(parseAppPath('/library/'), { kind: 'library' });
-  assert.deepEqual(parseAppPath('/not-a-page'), { kind: 'recommendation' });
-  assert.deepEqual(parseAppPath('/read/'), { kind: 'recommendation' });
+  assert.deepEqual(parseAppPath('/not-a-page'), { kind: 'landing' });
+  assert.deepEqual(parseAppPath('/read/'), { kind: 'landing' });
 });
 
 test('builds stable paths for every route kind', () => {
-  assert.equal(buildAppPath({ kind: 'recommendation' }), '/');
+  assert.equal(buildAppPath({ kind: 'landing' }), '/');
+  assert.equal(buildAppPath({ kind: 'recommendation' }), '/recommend');
   assert.equal(buildAppPath({ kind: 'library' }), '/library');
   assert.equal(buildAppPath({ kind: 'assessment' }), '/assessment');
   assert.equal(buildAppPath({ kind: 'learning' }), '/learning');
   assert.equal(buildAppPath({ kind: 'history' }), '/history');
 });
 
-test('first-time visitors are routed to assessment from home', () => {
-  assert.deepEqual(resolveInitialAppRoute('/', false), { kind: 'assessment' });
-  assert.deepEqual(resolveInitialAppRoute('/', true), { kind: 'recommendation' });
+test('the public landing page is not skipped based on assessment history', () => {
+  assert.deepEqual(resolveInitialAppRoute('/', false), { kind: 'landing' });
+  assert.deepEqual(resolveInitialAppRoute('/', true), { kind: 'landing' });
   // Deep links stay intact even without assessment
   assert.deepEqual(resolveInitialAppRoute('/library', false), { kind: 'library' });
   assert.deepEqual(resolveInitialAppRoute('/assessment', false), { kind: 'assessment' });

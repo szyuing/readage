@@ -14,7 +14,7 @@ import {
 import {
   toLemma,
 } from './lib/proficiency';
-import { normalizeArticleSessions, readStorage, STORAGE_KEYS, usePersistentState } from './lib/storage';
+import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState } from './lib/storage';
 import {
   buildWeakPointMetrics,
   calculateLearningStreak,
@@ -58,6 +58,8 @@ import {
 } from './lib/articleImport';
 import { buildIntentionalLevelRating } from './lib/articleLevel';
 import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
+import { LandingPage } from './components/LandingPage';
+import { ReadAgeLogo } from './components/ReadAgeBrand';
 import { ReadingScreen } from './components/ReadingScreen';
 import { MyLearningScreen } from './components/MyLearningScreen';
 import { HistoryScreen } from './components/HistoryScreen';
@@ -80,7 +82,7 @@ import {
   withAppHistoryIndex,
   type AppRoute,
 } from './lib/appRoutes';
-import { BookOpen, BarChart3, Compass, History, Library } from 'lucide-react';
+import { BookOpen, BarChart3, History, Library } from 'lucide-react';
 import {
   useDueWords,
   useProficiencyStats,
@@ -126,14 +128,8 @@ type NavigationOptions = {
 };
 
 function getInitialAppRoute(): AppRoute {
-  if (typeof window === 'undefined') return { kind: 'recommendation' };
-  const storedAssessment = readStorage(
-    window.localStorage,
-    STORAGE_KEYS.readingAssessment,
-    null,
-    normalizeUserReadingAssessment
-  );
-  return resolveInitialAppRoute(window.location.pathname, Boolean(storedAssessment));
+  if (typeof window === 'undefined') return { kind: 'landing' };
+  return resolveInitialAppRoute(window.location.pathname, false);
 }
 
 function logRecommendationSource(
@@ -1214,7 +1210,7 @@ export default function App() {
       <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
-            { id: 'recommendation' as const, label: 'Recommend', icon: Compass },
+            { id: 'recommendation' as const, label: 'Recommend', icon: null },
             { id: 'library' as const, label: 'Library', icon: Library },
             { id: 'reading' as const, label: 'P2', icon: BookOpen },
             { id: 'learning' as const, label: 'P3', icon: BarChart3 },
@@ -1247,7 +1243,9 @@ export default function App() {
                 : 'hover:bg-[#E4DFD5] active:bg-[#E0DBCF]'
             }`}
           >
-            <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+            {Icon
+              ? <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+              : <ReadAgeLogo className="h-5 w-5 sm:h-4 sm:w-4" />}
             {id === 'library' && (
               <span className="hidden sm:inline">{label}</span>
             )}
@@ -1256,6 +1254,15 @@ export default function App() {
       </div>
     </nav>
   );
+
+  if (route.kind === 'landing') {
+    return (
+      <LandingPage
+        onStartAssessment={() => navigate({ kind: 'assessment' })}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col overflow-x-clip safe-px">
       {isRecommending && (
