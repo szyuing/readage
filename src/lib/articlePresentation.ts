@@ -1,7 +1,12 @@
 export type ArticleParagraphKind = 'body' | 'title' | 'author' | 'furniture';
 
+export type ArticleInlinePart =
+  | { type: 'text'; value: string }
+  | { type: 'link'; value: string; href: string };
+
 const NAVIGATION_LABELS = ['next', 'section menu', 'main menu', 'previous'];
-const AUTHOR_PREFIX_RE = /^(?:by|written by|words by|text by|authors?|作者)\s*[:：]?\s*\S/i;
+const AUTHOR_PREFIX_RE = /^(?:(?:by|written by|words by|text by|byline)\b|authors?\b\s*[:：]?|作者\s*[:：]?)\s*\S/i;
+const INLINE_LINK_RE = /\[([^\]\r\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>"']+)/gi;
 
 function normalizeComparableText(value: string): string {
   return value
@@ -50,4 +55,49 @@ export function classifyArticleParagraph(
   if (isTitleParagraph(paragraph, articleTitle)) return 'title';
   if (AUTHOR_PREFIX_RE.test(paragraph.trim())) return 'author';
   return 'body';
+}
+
+function asSafeHttpHref(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function splitTrailingLinkPunctuation(value: string): [string, string] {
+  const match = value.match(/^(.*?)([.,;:!?]+)$/);
+  return match ? [match[1], match[2]] : [value, ''];
+}
+
+/** Split pasted prose into safe text and external-link parts for semantic rendering. */
+export function getArticleInlineParts(value: string): ArticleInlinePart[] {
+  const parts: ArticleInlinePart[] = [];
+  let cursor = 0;
+
+  for (const match of value.matchAll(INLINE_LINK_RE)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ type: 'text', value: value.slice(cursor, index) });
+
+    const markdownLabel = match[1];
+    const rawHref = match[2] || match[3];
+    const [hrefCandidate, trailingPunctuation] = splitTrailingLinkPunctuation(rawHref);
+    const href = asSafeHttpHref(hrefCandidate);
+
+    if (href) {
+      parts.push({
+        type: 'link',
+        value: markdownLabel || hrefCandidate,
+        href,
+      });
+      if (trailingPunctuation) parts.push({ type: 'text', value: trailingPunctuation });
+    } else {
+      parts.push({ type: 'text', value: match[0] });
+    }
+    cursor = index + match[0].length;
+  }
+
+  if (cursor < value.length) parts.push({ type: 'text', value: value.slice(cursor) });
+  return parts.length > 0 ? parts : [{ type: 'text', value }];
 }

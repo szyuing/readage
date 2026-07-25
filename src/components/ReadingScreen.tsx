@@ -32,7 +32,7 @@ import { getPhraseHighlightMatches } from '../lib/textHighlight';
 import { postTutor } from '../lib/tutorClient';
 import type { ImportJob } from '../lib/articleImport';
 import { needsImportEnrichment } from '../lib/articleImport';
-import { classifyArticleParagraph } from '../lib/articlePresentation';
+import { classifyArticleParagraph, getArticleInlineParts } from '../lib/articlePresentation';
 import {
   buildReadingAdvancePayload,
   hasArticleExitedViewport,
@@ -742,6 +742,63 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     return 'text-[1.05rem] leading-[1.75] sm:text-lg sm:leading-relaxed';
   };
 
+  const renderInteractiveParagraph = (
+    paragraph: string,
+    readingArticle: Article,
+    readingHighlightTerms: string[],
+  ): React.ReactNode => {
+    const sourceTokens = paragraph.trim().split(/\s+/).filter(Boolean);
+    const highlightMatches = getPhraseHighlightMatches(sourceTokens, readingHighlightTerms);
+    let tokenIndex = 0;
+
+    return getArticleInlineParts(paragraph).map((part, partIndex) => {
+      if (part.type === 'link') {
+        tokenIndex += Math.max(1, part.value.trim().split(/\s+/).filter(Boolean).length);
+        return (
+          <a
+            key={`link-${partIndex}`}
+            href={part.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#A94E2B] underline decoration-[#D7A28F] underline-offset-4 hover:text-[#7E351C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C35E37]"
+          >
+            {part.value}
+          </a>
+        );
+      }
+
+      return part.value.split(/(\s+)/).map((piece, pieceIndex) => {
+        if (/^\s+$/.test(piece)) return piece;
+
+        const currentTokenIndex = tokenIndex;
+        // Link punctuation is split into its own text part, but shares the URL token index.
+        if (!/^[\p{P}\p{S}]+$/u.test(piece)) tokenIndex += 1;
+        const matchedTerm = highlightMatches[currentTokenIndex];
+        return (
+          <span
+            key={`text-${partIndex}-${pieceIndex}`}
+            onClick={(event) => handleWordClick(
+              matchedTerm || piece,
+              paragraph,
+              currentTokenIndex,
+              event,
+              readingArticle,
+              readingHighlightTerms,
+            )}
+            className={
+              matchedTerm
+                ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
+                : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'
+            }
+            title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
+          >
+            {piece}
+          </span>
+        );
+      });
+    });
+  };
+
   const shouldIgnoreSwipeTarget = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
     return Boolean(target.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"]'));
@@ -1203,28 +1260,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             const paragraphKind = classifyArticleParagraph(paragraph, article.title);
             if (paragraphKind === 'furniture') return null;
 
-            const words = paragraph.trim().split(/\s+/);
-            const highlightMatches = getPhraseHighlightMatches(words, highlightTerms);
             const zh = article.paragraphTranslations?.[pIdx];
-            const wordSpans = words.map((word, wIdx) => {
-              const matchedTerm = highlightMatches[wIdx];
-              return (
-                <React.Fragment key={wIdx}>
-                  <span
-                    onClick={(e) => handleWordClick(matchedTerm || word, paragraph, wIdx, e)}
-                    className={
-                      matchedTerm
-                        ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
-                        : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'
-                    }
-                    title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
-                  >
-                    {word}
-                  </span>
-                  {wIdx < words.length - 1 ? ' ' : null}
-                </React.Fragment>
-              );
-            });
+            const inlineContent = paragraphKind === 'author'
+              ? paragraph
+              : renderInteractiveParagraph(paragraph, article, highlightTerms);
 
             const translationClassName =
               paragraphKind === 'title'
@@ -1251,7 +1290,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     data-reading-last-paragraph={pIdx === currentLastParagraphIndex ? 'true' : undefined}
                     className="font-serif text-2xl sm:text-3xl font-bold leading-tight tracking-normal text-[#2A2621]"
                   >
-                    {wordSpans}
+                    {inlineContent}
                   </h2>
                 ) : (
                   <p
@@ -1261,10 +1300,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     className={
                       paragraphKind === 'author'
                         ? 'font-sans text-sm sm:text-base font-bold leading-relaxed tracking-normal text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
-                        : 'tracking-normal'
+                        : 'tracking-normal indent-8 sm:indent-10'
                     }
                   >
-                    {wordSpans}
+                    {inlineContent}
                   </p>
                 )}
                 {showParagraphTranslations && zh && (
@@ -1311,36 +1350,13 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   {nextArticle.content.map((paragraph, pIdx) => {
                     const paragraphKind = classifyArticleParagraph(paragraph, nextArticle.title);
                     if (paragraphKind === 'furniture') return null;
-                    const words = paragraph.trim().split(/\s+/);
                     const nextHighlightTerms = [
                       ...(nextArticle.keyWords || []),
                       ...(nextArticle.embeddedReviewWords || []),
                     ];
-                    const highlightMatches = getPhraseHighlightMatches(words, nextHighlightTerms);
-                    const wordSpans = words.map((word, wIdx) => {
-                      const matchedTerm = highlightMatches[wIdx];
-                      return (
-                        <React.Fragment key={wIdx}>
-                          <span
-                            onClick={(e) => handleWordClick(
-                              matchedTerm || word,
-                              paragraph,
-                              wIdx,
-                              e,
-                              nextArticle,
-                              nextHighlightTerms,
-                            )}
-                            className={matchedTerm
-                              ? 'bg-[#FEF08A] hover:bg-[#FDE047] text-[#1E1B18] px-1 py-0.5 rounded transition-all cursor-pointer inline-block font-medium border-b border-[#EAB308]'
-                              : 'hover:bg-[#EFECE3] rounded px-0.5 transition-colors cursor-pointer'}
-                            title={matchedTerm ? `Review phrase: ${matchedTerm}` : 'Click to look up'}
-                          >
-                            {word}
-                          </span>
-                          {wIdx < words.length - 1 ? ' ' : null}
-                        </React.Fragment>
-                      );
-                    });
+                    const inlineContent = paragraphKind === 'author'
+                      ? paragraph
+                      : renderInteractiveParagraph(paragraph, nextArticle, nextHighlightTerms);
                     const translation = nextArticle.paragraphTranslations?.[pIdx];
                     return (
                       <div key={pIdx} className="space-y-2">
@@ -1351,7 +1367,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                             data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
                             className="font-serif text-xl sm:text-2xl font-bold leading-tight text-[#2A2621]"
                           >
-                            {wordSpans}
+                            {inlineContent}
                           </h3>
                         ) : (
                           <p
@@ -1360,9 +1376,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                             data-reading-last-paragraph={pIdx === nextLastParagraphIndex ? 'true' : undefined}
                             className={paragraphKind === 'author'
                               ? 'font-sans text-sm sm:text-base font-bold leading-relaxed text-[#6C655C] pl-3 border-l-2 border-[#C35E37]'
-                              : 'tracking-normal'}
+                              : 'tracking-normal indent-8 sm:indent-10'}
                           >
-                            {wordSpans}
+                            {inlineContent}
                           </p>
                         )}
                         {showParagraphTranslations && translation && (
