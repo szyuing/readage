@@ -56,6 +56,16 @@ export interface MagazineArticleStub {
   wordCount?: number;
 }
 
+/** Compact article metadata for cross-magazine catalog browsing. */
+export interface MagazineCatalogArticleStub extends MagazineArticleStub {
+  level: string;
+  sourceId: MagazineSourceId;
+  sourceName: string;
+  issueId: string;
+  issueLabel: string;
+  date: string;
+}
+
 export interface MagazineSourceSummary {
   id: MagazineSourceId;
   displayName: string;

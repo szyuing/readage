@@ -31,6 +31,17 @@ import {
 } from './recommendationPoolRotation';
 import { postTutor, type TutorPostOptions } from './tutorClient';
 import type { ArticleCandidate, RecommendationScore } from './memoryV2/recommendation';
+import {
+  emitRecCandidates,
+  emitRecCatalogLoaded,
+  emitRecPhase,
+  emitRecPicked,
+  emitRecPoolReady,
+  getActiveRecSessionId,
+  normalizeReviewWords,
+  reviewHitsInLemmas,
+  startRecSession,
+} from './recommendationTelemetry';
 
 export type RecommendationSource =
   | 'local_memory'
@@ -87,6 +98,14 @@ export interface ResolvedRecommendation {
   article: Article;
   source: RecommendationSource;
 }
+
+/** Real pick diagnostics for particle telemetry (last full-catalog win). */
+let lastCatalogPickTelemetry: {
+  score?: number;
+  rank?: number;
+  reviewHits?: string[];
+  reason?: string;
+} | null = null;
 
 function buildAiArticle(
   data: RecommendedArticleCandidate,
@@ -165,6 +184,7 @@ async function resolveFromFullCatalog(
   };
 
   onPhase?.('catalog');
+  emitRecPhase('catalog');
   const catalogStarted = Date.now();
   let index: MagazineLemmaIndex | null = null;
   if (loadLemmaIndex) {
@@ -175,9 +195,13 @@ async function resolveFromFullCatalog(
   }
   timing.catalogLoadMs = Date.now() - catalogStarted;
   timing.catalogSize = index?.articleCount;
+  if (typeof timing.catalogSize === 'number' && typeof timing.catalogLoadMs === 'number') {
+    emitRecCatalogLoaded(timing.catalogSize, timing.catalogLoadMs);
+  }
 
   if (!index || index.articleCount === 0) return null;
 
+  const catalogArticleCount = index.articleCount;
   const candidates: ArticleCandidate[] = expandLemmaIndexToCandidates(
     index,
     excluded
@@ -213,10 +237,15 @@ async function resolveFromFullCatalog(
     });
   }
 
+  const poolSize = candidates.length;
+  const excludedCount = Math.max(0, catalogArticleCount - poolSize);
+  emitRecPoolReady(poolSize, excludedCount);
+
+  const reviewWords = normalizeReviewWords(request.reviewWords);
   const rankStarted = Date.now();
   const scores = await rankCatalog(candidates, {
     ...effectiveMemoryOptions,
-    reviewWords: request.reviewWords,
+    reviewWords,
     excludeArticleIds: expandedExcludeIds,
     userLevel: profile.userLevel,
     preferredTopics: request.topic ? [request.topic] : effectiveMemoryOptions.preferredTopics,
@@ -226,9 +255,36 @@ async function resolveFromFullCatalog(
   });
   timing.rankMs = Date.now() - rankStarted;
 
+  const titleById = new Map(
+    candidates.map((row) => [row.article.id, row.article.title || row.article.id] as const)
+  );
+  const lemmasById = new Map(
+    candidates.map((row) => [row.article.id, row.lemmas] as const)
+  );
+  // Full pool scored in ranker; only head is returned for pick + visualizer.
+  emitRecCandidates(scores, titleById, {
+    totalScored: poolSize,
+    shortlistSize: scores.length,
+    reviewWords,
+    lemmasById,
+  });
+
   const rotationDate = getRecommendationPoolRotationDate();
   const picked = pickDailyRankedRecommendation(scores, rotationDate, 24);
   if (!picked) return null;
+
+  const pickRank = scores.findIndex((row) => row.articleId === picked.articleId);
+  const pickScore = pickRank >= 0 ? scores[pickRank] : picked;
+  const pickHits = reviewHitsInLemmas(
+    lemmasById.get(picked.articleId) ?? [],
+    reviewWords
+  );
+  lastCatalogPickTelemetry = {
+    score: pickScore.score,
+    rank: pickRank >= 0 ? pickRank + 1 : 1,
+    reviewHits: pickHits,
+    reason: pickScore.reason,
+  };
 
   // Prefer in-memory body when already loaded (history / small library pool).
   const localHit =
@@ -295,6 +351,39 @@ export async function resolveRecommendationArticle(
   const expandedExcludeIds = Array.from(excluded);
   const timing: Partial<RecommendationTiming> = {};
 
+  if (!getActiveRecSessionId()) {
+    startRecSession({
+      topic,
+      reviewWords,
+      userLevel: profile.userLevel,
+    });
+  }
+
+  lastCatalogPickTelemetry = null;
+
+  const emitPicked = (
+    article: Article,
+    source: RecommendationSource,
+    totalMs: number,
+    extra?: {
+      score?: number;
+      rank?: number;
+      reviewHits?: string[];
+      reason?: string;
+    }
+  ) => {
+    emitRecPicked({
+      articleId: article.id,
+      title: article.title,
+      source,
+      totalMs,
+      score: extra?.score,
+      rank: extra?.rank,
+      reviewHits: extra?.reviewHits,
+      reason: extra?.reason,
+    });
+  };
+
   if (useFullCatalog) {
     try {
       const catalogHit = await resolveFromFullCatalog(
@@ -311,12 +400,14 @@ export async function resolveRecommendationArticle(
         tutorOptions?.signal
       );
       if (catalogHit) {
+        const totalMs = Date.now() - started;
         const finalTiming: RecommendationTiming = {
           ...timing,
-          totalMs: Date.now() - started,
+          totalMs,
           source: catalogHit.source,
         };
         onTiming?.(finalTiming);
+        emitPicked(catalogHit.article, catalogHit.source, totalMs, lastCatalogPickTelemetry ?? undefined);
         return catalogHit;
       }
     } catch (error) {
@@ -326,6 +417,7 @@ export async function resolveRecommendationArticle(
   }
 
   onPhase?.('local');
+  emitRecPhase('local');
   const localArticle = await localProvider(
     { topic, reviewWords, excludeArticleIds: expandedExcludeIds },
     library,
@@ -340,27 +432,33 @@ export async function resolveRecommendationArticle(
   );
 
   if (localArticle) {
+    const totalMs = Date.now() - started;
     onTiming?.({
       ...timing,
-      totalMs: Date.now() - started,
+      totalMs,
       source: 'local_memory',
     });
+    emitPicked(localArticle, 'local_memory', totalMs);
     return { article: localArticle, source: 'local_memory' };
   }
 
   onPhase?.('library');
+  emitRecPhase('library');
   const libraryArticle = libraryFallback(library, history, excluded);
   if (libraryArticle) {
+    const totalMs = Date.now() - started;
     onTiming?.({
       ...timing,
-      totalMs: Date.now() - started,
+      totalMs,
       source: 'library_fallback',
     });
+    emitPicked(libraryArticle, 'library_fallback', totalMs);
     return { article: libraryArticle, source: 'library_fallback' };
   }
 
   // Only spend the interaction budget on AI when the library has no candidate.
   onPhase?.('ai');
+  emitRecPhase('ai');
   try {
     const response = await aiPost<RecommendedArticleCandidate>(
       {
@@ -372,13 +470,16 @@ export async function resolveRecommendationArticle(
       fetch,
       tutorOptions
     );
+    const totalMs = Date.now() - started;
     onTiming?.({
       ...timing,
-      totalMs: Date.now() - started,
+      totalMs,
       source: 'ai',
     });
+    const article = buildAiArticle(response.result, topic, reviewWords, profile.userLevel);
+    emitPicked(article, 'ai', totalMs);
     return {
-      article: buildAiArticle(response.result, topic, reviewWords, profile.userLevel),
+      article,
       source: 'ai',
     };
   } catch (error) {
@@ -388,11 +489,13 @@ export async function resolveRecommendationArticle(
     // Last-ditch: re-check library in case history/status changed mid-flight.
     const finalFallback = libraryFallback(library, history, excluded);
     if (finalFallback) {
+      const totalMs = Date.now() - started;
       onTiming?.({
         ...timing,
-        totalMs: Date.now() - started,
+        totalMs,
         source: 'timeout_fallback',
       });
+      emitPicked(finalFallback, 'timeout_fallback', totalMs);
       return { article: finalFallback, source: 'timeout_fallback' };
     }
     onTiming?.({

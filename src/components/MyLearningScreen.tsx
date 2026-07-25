@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, CheckCircle2, Clock3 } from 'lucide-react';
+import { CheckCircle2, Clock3 } from 'lucide-react';
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -9,9 +9,11 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
+import { AppPageHeader } from './AppPageHeader';
 
 interface MyLearningScreenProps {
   onBack: () => void;
+  navigation?: React.ReactNode;
   onStartTargetedReview: () => void;
   onOpenArticle: (articleId: string) => void;
   onStartEnglishTest?: () => void;
@@ -31,6 +33,7 @@ interface MyLearningScreenProps {
 
 export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
   onBack,
+  navigation,
   onStartTargetedReview,
   onOpenArticle,
   onStartEnglishTest,
@@ -55,20 +58,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
-      <header className="px-6 py-5 flex items-center gap-4 border-b border-[#E8E2D5]">
-        <button
-          type="button"
-          onClick={onBack}
-          className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
-          title="Back"
-          aria-label="返回首页"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div>
-          <h1 className="font-serif text-2xl font-semibold text-[#2C2723]">My Learning</h1>
-        </div>
-      </header>
+      <AppPageHeader onBack={onBack} navigation={navigation} />
 
       <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
         <div className="grid grid-cols-2 gap-4">

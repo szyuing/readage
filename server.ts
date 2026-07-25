@@ -979,6 +979,98 @@ app.post('/api/tutor', requireSensitiveApiAccess, async (req, res) => {
   }
 });
 
+/** In-memory ring buffer for the external rec-particles visualizer (dev). */
+const REC_EVENT_BUFFER_MAX = 200;
+const recommendationEventBuffer: Array<Record<string, unknown>> = [];
+const recommendationEventSseClients = new Set<import('express').Response>();
+
+function isLoopbackRequest(req: express.Request): boolean {
+  const raw = (req.socket.remoteAddress || req.ip || '').replace(/^::ffff:/, '');
+  return (
+    raw === '127.0.0.1'
+    || raw === '::1'
+    || raw === 'localhost'
+    || raw === ''
+    // Windows / some proxies report IPv6 loopback variants
+    || raw === '0:0:0:0:0:0:0:1'
+  );
+}
+
+function pushRecommendationDebugEvent(event: Record<string, unknown>): void {
+  recommendationEventBuffer.push(event);
+  if (recommendationEventBuffer.length > REC_EVENT_BUFFER_MAX) {
+    recommendationEventBuffer.splice(0, recommendationEventBuffer.length - REC_EVENT_BUFFER_MAX);
+  }
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of recommendationEventSseClients) {
+    try {
+      client.write(payload);
+    } catch {
+      recommendationEventSseClients.delete(client);
+    }
+  }
+}
+
+// Register BEFORE setupServer so routes exist even if middleware order changes.
+// CORS open for the particle page on :5177.
+const allowRecDebugCors: express.RequestHandler = (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+  return next();
+};
+
+app.options('/api/debug/recommendation-events', allowRecDebugCors, (_req, res) => res.status(204).end());
+app.options('/api/debug/recommendation-stream', allowRecDebugCors, (_req, res) => res.status(204).end());
+
+app.post('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null;
+  if (!body || typeof body.type !== 'string') {
+    return res.status(400).json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Expected event object.' } });
+  }
+  pushRecommendationDebugEvent({
+    ...body,
+    at: typeof body.at === 'number' ? body.at : Date.now(),
+    receivedAt: Date.now(),
+  });
+  return res.json({ ok: true });
+});
+
+app.get('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  }
+  const sinceRaw = typeof req.query.since === 'string' ? Number(req.query.since) : 0;
+  const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
+  const events = recommendationEventBuffer.filter((event) => {
+    const at = typeof event.at === 'number' ? event.at : 0;
+    const receivedAt = typeof event.receivedAt === 'number' ? event.receivedAt : at;
+    return Math.max(at, receivedAt) > since;
+  });
+  return res.json({ ok: true, events, serverTime: Date.now() });
+});
+
+app.get('/api/debug/recommendation-stream', allowRecDebugCors, (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  }
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  res.write(`data: ${JSON.stringify({ type: 'idle', at: Date.now() })}\n\n`);
+  recommendationEventSseClients.add(res);
+  req.on('close', () => {
+    recommendationEventSseClients.delete(res);
+  });
+});
+
 async function setupServer() {
   // Health check — confirms Express API layer is live (not Vite HTML)
   app.get('/api/health', (_req, res) => {

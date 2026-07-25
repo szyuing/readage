@@ -7,6 +7,7 @@ import {
   hasArticleExitedViewport,
   isLeftSwipeGesture,
   minDwellMsBeforeAutoAdvance,
+  selectCurrentContinuousArticleId,
 } from '../src/lib/continuousReading';
 
 test('completed reading commits unique staged exposures', () => {
@@ -36,6 +37,24 @@ test('left swipe requires distance and horizontal dominance', () => {
   assert.equal(isLeftSwipeGesture({ startX: 200, startY: 100, endX: 150, endY: 100 }), false);
   assert.equal(isLeftSwipeGesture({ startX: 200, startY: 100, endX: 120, endY: 180 }), false);
   assert.equal(isLeftSwipeGesture({ startX: 100, startY: 100, endX: 180, endY: 100 }), false);
+});
+
+test('left swipe advances the article currently in the viewport', () => {
+  assert.equal(
+    selectCurrentContinuousArticleId([
+      { articleId: 'article-1', top: -900, bottom: -20 },
+      { articleId: 'article-2', top: 36, bottom: 880 },
+      { articleId: 'article-3', top: 920, bottom: 1_700 },
+    ]),
+    'article-2',
+  );
+  assert.equal(
+    selectCurrentContinuousArticleId([
+      { articleId: 'article-1', top: -900, bottom: -20 },
+      { articleId: 'article-2', top: -40, bottom: -1 },
+    ]),
+    null,
+  );
 });
 
 test('short articles require a multi-second dwell before auto-advance', () => {

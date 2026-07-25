@@ -4,11 +4,14 @@ import { randomUUID } from 'crypto';
 import type {
   Article,
   MagazineArticleStub,
+  MagazineCatalogArticleStub,
   MagazineCatalogIndex,
   MagazineIssue,
   MagazineSourceSummary,
   MagazineSyncResult,
 } from '../../src/types';
+import { articleContentFingerprint } from '../../src/lib/articleContent';
+import { getArticleCefrLevel } from '../../src/lib/articleLevel';
 import { issueFileKey, MAGAZINE_SOURCES, parseIssueId } from './config';
 import {
   getRecommendationPoolRotationDate,
@@ -198,6 +201,99 @@ export async function loadArticle(articleId: string): Promise<Article | null> {
   return readJsonFile<Article | null>(articlePath(articleId), null);
 }
 
+export interface CatalogArticlePageOptions {
+  level: string;
+  query?: string;
+  limit: number;
+  cursor?: string;
+}
+
+export interface CatalogArticlePage {
+  articles: MagazineCatalogArticleStub[];
+  total: number;
+  nextCursor: string | null;
+}
+
+async function loadCatalogIndexFromRoot(dataRoot: string): Promise<MagazineCatalogIndex> {
+  return readJsonFile<MagazineCatalogIndex>(path.join(dataRoot, 'index.json'), {
+    lastSyncAt: null,
+    sources: [],
+    issues: [],
+  });
+}
+
+/**
+ * Returns compact, article-level catalog rows from the current article files.
+ * The enrichment process updates these files after import, unlike issue stubs.
+ */
+export async function loadCatalogArticlePage(
+  options: CatalogArticlePageOptions,
+  dataRoot = DATA_ROOT
+): Promise<CatalogArticlePage> {
+  const index = await loadCatalogIndexFromRoot(dataRoot);
+  const sourceNames = new Map(index.sources.map((source) => [source.id, source.displayName]));
+  const issues = new Map(index.issues.map((issue) => [issue.id, issue]));
+  const normalizedQuery = options.query?.trim().toLocaleLowerCase() || '';
+  const offset = Math.max(0, Number.parseInt(options.cursor || '0', 10) || 0);
+  const directory = path.join(dataRoot, 'articles_by_id');
+
+  let names: string[] = [];
+  try {
+    names = (await fs.readdir(directory)).filter((name) => name.endsWith('.json'));
+  } catch (error) {
+    if (isErrnoException(error) && error.code === 'ENOENT') {
+      return { articles: [], total: 0, nextCursor: null };
+    }
+    throw error;
+  }
+
+  const rows = (await Promise.all(names.map(async (name): Promise<MagazineCatalogArticleStub | null> => {
+    try {
+      const article = JSON.parse(await fs.readFile(path.join(directory, name), 'utf8')) as Article;
+      const level = getArticleCefrLevel(article);
+      const issueId = article.magazineIssueId || '';
+      const sourceId = article.magazineSourceId || '';
+      if (!article.id || !level || level !== options.level || !issueId || !sourceId) return null;
+
+      const issue = issues.get(issueId);
+      const sourceName = sourceNames.get(sourceId) || sourceId;
+      const issueLabel = issue?.issueLabel || article.date || issueId;
+      const haystack = [article.title, article.description, sourceName, issueLabel]
+        .join(' ')
+        .toLocaleLowerCase();
+      if (normalizedQuery && !haystack.includes(normalizedQuery)) return null;
+
+      return {
+        id: article.id,
+        title: article.title,
+        description: article.description,
+        wordCount: article.content.join(' ').trim().split(/\s+/).filter(Boolean).length,
+        level,
+        sourceId,
+        sourceName,
+        issueId,
+        issueLabel,
+        date: article.date || issue?.publishedAt || issueLabel,
+      } satisfies MagazineCatalogArticleStub;
+    } catch {
+      return null;
+    }
+  }))).filter((article): article is MagazineCatalogArticleStub => article !== null);
+
+  rows.sort((a, b) => {
+    const byDate = b.date.localeCompare(a.date);
+    return byDate || a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+  });
+
+  const articles = rows.slice(offset, offset + options.limit);
+  const nextOffset = offset + articles.length;
+  return {
+    articles,
+    total: rows.length,
+    nextCursor: nextOffset < rows.length ? String(nextOffset) : null,
+  };
+}
+
 const DEFAULT_RECOMMENDATION_CANDIDATE_LIMIT = 48;
 const MIN_RECOMMENDATION_WORD_COUNT = 80;
 /** Max eligible stubs considered before daily rotation picks the active pool. */
@@ -302,6 +398,7 @@ export async function loadRecommendationCandidates(
 
   const articles: Article[] = [];
   const loadedIds = new Set<string>();
+  const seenContentFingerprints = new Set<string>();
 
   for (const articleId of orderedIds) {
     if (articles.length >= cappedLimit) break;
@@ -314,6 +411,12 @@ export async function loadRecommendationCandidates(
     }
     const textLen = article.content.join(' ').trim().length;
     if (textLen < MIN_RECOMMENDATION_WORD_COUNT) continue;
+
+    // The same article is often present in several rolling issue snapshots.
+    // IDs differ by issue, so deduplicate only after loading the canonical body.
+    const fingerprint = articleContentFingerprint(article);
+    if (fingerprint && seenContentFingerprints.has(fingerprint)) continue;
+    if (fingerprint) seenContentFingerprints.add(fingerprint);
 
     articles.push(article);
   }

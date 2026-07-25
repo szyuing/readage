@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getSourceById, MAGAZINE_SOURCES } from './config';
 import {
   loadArticle,
+  loadCatalogArticlePage,
   loadIndex,
   loadIssueById,
   loadRecommendationCandidates,
@@ -14,10 +15,61 @@ interface SyncRequestError extends Error {
   code: 'INVALID_SYNC_REQUEST';
 }
 
+interface CatalogArticleRequestError extends Error {
+  code: 'INVALID_ARTICLE_CATALOG_REQUEST';
+}
+
 function invalidSyncRequest(message: string): SyncRequestError {
   const error = new Error(`Invalid sync request: ${message}`) as SyncRequestError;
   error.code = 'INVALID_SYNC_REQUEST';
   return error;
+}
+
+function invalidCatalogArticleRequest(message: string): CatalogArticleRequestError {
+  const error = new Error(`Invalid article catalog request: ${message}`) as CatalogArticleRequestError;
+  error.code = 'INVALID_ARTICLE_CATALOG_REQUEST';
+  return error;
+}
+
+function queryValue(query: Record<string, unknown>, key: string): string | undefined {
+  const value = query[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw invalidCatalogArticleRequest(`${key} must be a single string`);
+  }
+  return value;
+}
+
+export function parseCatalogArticleQuery(query: Record<string, unknown>) {
+  const rawLevel = queryValue(query, 'level')?.trim().toUpperCase();
+  const levels = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+  if (!rawLevel || !levels.includes(rawLevel)) {
+    throw invalidCatalogArticleRequest(`level must be one of ${levels.join(', ')}`);
+  }
+
+  const rawQuery = queryValue(query, 'q');
+  const normalizedQuery = rawQuery?.trim();
+  if (normalizedQuery && normalizedQuery.length > 120) {
+    throw invalidCatalogArticleRequest('q must be at most 120 characters');
+  }
+
+  const rawLimit = queryValue(query, 'limit');
+  const limit = rawLimit === undefined ? 24 : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 60) {
+    throw invalidCatalogArticleRequest('limit must be an integer from 1 to 60');
+  }
+
+  const cursor = queryValue(query, 'cursor');
+  if (cursor !== undefined && !/^(0|[1-9]\d*)$/.test(cursor)) {
+    throw invalidCatalogArticleRequest('cursor must be a non-negative integer');
+  }
+
+  return {
+    level: rawLevel,
+    query: normalizedQuery,
+    limit,
+    cursor,
+  };
 }
 
 export function parseSyncRequest(body: unknown): SyncOptions {
@@ -109,6 +161,24 @@ export function createMagazineRouter(): Router {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ ok: false, error: { code: 'ISSUE_FAILED', message } });
+    }
+  });
+
+  router.get('/articles', async (req, res) => {
+    try {
+      const query = parseCatalogArticleQuery(req.query as Record<string, unknown>);
+      const page = await loadCatalogArticlePage(query);
+      res.json({ ok: true, ...page });
+    } catch (err) {
+      const error = err as Error & { code?: string };
+      if (error.code === 'INVALID_ARTICLE_CATALOG_REQUEST') {
+        return res.status(400).json({
+          ok: false,
+          error: { code: error.code, message: error.message },
+        });
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ ok: false, error: { code: 'ARTICLE_CATALOG_FAILED', message } });
     }
   });
 

@@ -41,6 +41,7 @@ import {
   resolveRecommendationArticle,
   type RecommendationSource,
 } from './lib/resolveRecommendation';
+import { startRecSession } from './lib/recommendationTelemetry';
 import type { RecommendedArticleCandidate } from './lib/articleValidation';
 import {
   buildRecommendationArticlePool,
@@ -71,7 +72,7 @@ import {
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
 import { buildAppPath, parseAppPath, type AppRoute } from './lib/appRoutes';
-import { BookOpen, BarChart3, History, Library, ClipboardCheck, Sparkles } from 'lucide-react';
+import { BookOpen, BarChart3, History, Library, Sparkles } from 'lucide-react';
 import {
   useDueWords,
   useProficiencyStats,
@@ -823,6 +824,12 @@ export default function App() {
     request: { topic: string; reviewWords: string[]; excludeArticleIds: string[] },
     signal?: AbortSignal
   ) => {
+    startRecSession({
+      topic: request.topic,
+      reviewWords: request.reviewWords,
+      userLevel: userCefrLevel,
+    });
+
     // Small in-memory pool remains as fallback when full-catalog index is unavailable.
     const magazines = await ensureMagazineRecommendationPool(signal);
     const library = buildRecommendationArticlePool(
@@ -1177,53 +1184,54 @@ export default function App() {
     }
   };
   const returnHome = goToRecommendation;
+  const goBack = () => window.history.back();
+  const appNavigation = (
+    <div className="w-full flex items-center justify-center text-xs font-medium text-[#5B544C]">
+      <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
+        {(
+          [
+            { id: 'recommendation' as const, label: 'Recommend', icon: Sparkles },
+            { id: 'library' as const, label: 'Library', icon: Library },
+            { id: 'reading' as const, label: 'P2', icon: BookOpen },
+            { id: 'learning' as const, label: 'P3', icon: BarChart3 },
+            { id: 'history' as const, label: 'P4', icon: History },
+          ] as const
+        ).map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            aria-label={label}
+            title={label}
+            onClick={() => {
+              if (id === 'recommendation') {
+                goToRecommendation();
+                return;
+              }
+              if (id === 'reading') {
+                if (route.kind !== 'reading' && activeArticle) {
+                  navigate({ kind: 'reading', articleId: activeArticle.id });
+                }
+                return;
+              }
+              resetRecommendationFeed();
+              navigate({ kind: id });
+            }}
+            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 shrink-0 ${
+              route.kind === id
+                ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
+                : 'hover:bg-[#E4DFD5]'
+            }`}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {id === 'library' && (
+              <span className="hidden sm:inline">{label}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col">
-      <div className="bg-[#EFECE3] border-b border-[#E0DBCF] px-4 py-2 flex items-center justify-between text-xs font-medium text-[#5B544C]">
-        <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
-          {(
-            [
-              { id: 'recommendation' as const, label: 'Recommend', icon: Sparkles },
-              { id: 'library' as const, label: 'Library', icon: Library },
-              { id: 'reading' as const, label: 'P2', icon: BookOpen },
-              { id: 'assessment' as const, label: '测试', icon: ClipboardCheck },
-              { id: 'learning' as const, label: 'P3', icon: BarChart3 },
-              { id: 'history' as const, label: 'P4', icon: History },
-            ] as const
-          ).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              aria-label={label}
-              title={label}
-              onClick={() => {
-                if (id === 'recommendation') {
-                  goToRecommendation();
-                  return;
-                }
-                if (id === 'reading') {
-                  if (route.kind !== 'reading' && activeArticle) {
-                    navigate({ kind: 'reading', articleId: activeArticle.id });
-                  }
-                  return;
-                }
-                resetRecommendationFeed();
-                navigate({ kind: id });
-              }}
-              className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 shrink-0 ${
-                route.kind === id
-                  ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
-                  : 'hover:bg-[#E4DFD5]'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {(id === 'library' || id === 'assessment') && (
-                <span className="hidden sm:inline">{label}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {isRecommending && (
         <div className="bg-[#FEF3C7] border-b border-[#FDE68A] text-center text-xs text-[#92400E] py-2 font-medium flex items-center justify-center gap-3">
           <span>
@@ -1296,6 +1304,8 @@ export default function App() {
               resetRecommendationFeed();
               navigate({ kind: 'assessment' });
             }}
+            onBack={goBack}
+            navigation={appNavigation}
           />
         )}
 
@@ -1331,6 +1341,7 @@ export default function App() {
             }
             onInsertArticle={() => setShowEnterArticle(true)}
             onBack={goToRecommendation}
+            navigation={appNavigation}
           />
         )}
 
@@ -1338,6 +1349,7 @@ export default function App() {
           <ReadingScreen
             key={isRecommendationReading ? 'recommendation-reading-stream' : activeArticle.id}
             article={activeArticle}
+            navigation={appNavigation}
             continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
             onRetryImport={() => retryImportEnrichment(activeArticle.id)}
@@ -1407,6 +1419,7 @@ export default function App() {
         {route.kind === 'learning' && (
           <MyLearningScreen
             onBack={goToRecommendation}
+            navigation={appNavigation}
             onStartTargetedReview={handleStartTargetedReview}
             onOpenArticle={(id) => {
               const art = history.find((a) => a.id === id);
@@ -1436,6 +1449,7 @@ export default function App() {
               ingestArticle(article, { open: true, source: 'history' })
             }
             onBack={goToRecommendation}
+            navigation={appNavigation}
           />
         )}
       </div>

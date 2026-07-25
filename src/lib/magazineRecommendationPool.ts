@@ -5,6 +5,7 @@
  */
 
 import type { Article } from '../types';
+import { articleContentFingerprint } from './articleContent';
 import { getRecommendationPoolRotationDate } from './recommendationPoolRotation';
 
 const DEFAULT_POOL_LIMIT = 48;
@@ -150,9 +151,16 @@ export function buildRecommendationArticlePool(
   historyArticles: readonly Article[]
 ): Article[] {
   const byId = new Map<string, Article>();
+  const magazineIdByFingerprint = new Map<string, string>();
+  const isMagazineArticle = (article: Article) =>
+    article.source === 'magazine' || article.id.startsWith('mag:');
 
   for (const article of magazineArticles) {
-    if (article?.id) byId.set(article.id, article);
+    if (!article?.id) continue;
+    const fingerprint = articleContentFingerprint(article);
+    if (fingerprint && magazineIdByFingerprint.has(fingerprint)) continue;
+    byId.set(article.id, article);
+    if (fingerprint) magazineIdByFingerprint.set(fingerprint, article.id);
   }
   for (const article of libraryArticles) {
     if (article?.id && !byId.has(article.id)) byId.set(article.id, article);
@@ -161,16 +169,27 @@ export function buildRecommendationArticlePool(
   // history rows are thinner stubs — prefer the richer content payload.
   for (const article of historyArticles) {
     if (!article?.id) continue;
-    const existing = byId.get(article.id);
+    const canonicalId = isMagazineArticle(article)
+      ? magazineIdByFingerprint.get(articleContentFingerprint(article))
+      : undefined;
+    const existingId = byId.has(article.id) ? article.id : canonicalId;
+    const existing = existingId ? byId.get(existingId) : undefined;
     if (!existing) {
       byId.set(article.id, article);
+      if (isMagazineArticle(article)) {
+        const fingerprint = articleContentFingerprint(article);
+        if (fingerprint && !magazineIdByFingerprint.has(fingerprint)) {
+          magazineIdByFingerprint.set(fingerprint, article.id);
+        }
+      }
       continue;
     }
     const existingLen = existing.content?.join(' ').length ?? 0;
     const nextLen = article.content?.join(' ').length ?? 0;
-    byId.set(article.id, {
+    byId.set(existingId!, {
       ...existing,
       ...article,
+      id: existing.id,
       content: nextLen >= existingLen ? article.content : existing.content,
       keyWords: article.keyWords?.length ? article.keyWords : existing.keyWords,
       paragraphTranslations:

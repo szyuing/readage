@@ -1,5 +1,84 @@
 @import "tailwindcss";
 
+/* ---------- Mobile web base (no bottom-nav chrome) ---------- */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  min-height: 100dvh;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  background: #f8f6f0;
+  color: #2b2723;
+}
+
+/* Prefer dynamic viewport units when available (mobile browser chrome). */
+.min-h-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* iOS Safari zooms focused inputs under 16px — keep form controls readable. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  input[type='text'],
+  input[type='search'],
+  input[type='email'],
+  input:not([type]),
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Comfortable minimum hit area for icon buttons on touch devices. */
+@media (hover: none) and (pointer: coarse) {
+  .tap-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Safe-area helpers for notched phones (fixed UI). */
+.safe-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-pt {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-px {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Horizontal nav rows: allow swipe without page scroll fight. */
+.nav-scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.nav-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
 .review-word-strip {
   border-top: 1px solid #e6e0d5;
   border-bottom: 1px solid #e6e0d5;
@@ -508,15 +587,18 @@
   .word-card-backdrop {
     align-items: flex-end;
     padding: 0;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
 
   .word-card-dialog {
     width: 100%;
-    max-height: 92vh;
+    max-height: min(92vh, 92dvh);
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
     border-radius: 18px 18px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .word-card-dialog__bar {
@@ -525,11 +607,19 @@
   }
 
   .word-card-body {
-    padding: 22px 20px 32px;
+    padding: 22px 20px calc(32px + env(safe-area-inset-bottom, 0px));
   }
 
   .word-card-hero__word {
-    font-size: 36px;
+    font-size: clamp(28px, 9vw, 36px);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .word-card-icon-button,
+  .word-card-speak {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 

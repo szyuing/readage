@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, FilePlus2, Loader2, RefreshCw } from 'lucide-react';
+import { FilePlus2, Loader2, RefreshCw } from 'lucide-react';
 import {
   Article,
   MagazineArticleStub,
+  MagazineCatalogArticleStub,
   MagazineIssue,
   MagazineSourceSummary,
   MagazineSyncStatus,
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
 import { getArticleCefrLevel } from '../lib/articleLevel';
+import { AppPageHeader } from './AppPageHeader';
 
 type LibraryTab = 'mine' | 'magazines';
 
@@ -27,6 +29,7 @@ interface LibraryScreenProps {
   onSelectArticle: (article: Article) => void | Promise<void>;
   onInsertArticle: () => void;
   onBack: () => void;
+  navigation?: React.ReactNode;
 }
 
 export const LibraryScreen: React.FC<LibraryScreenProps> = ({
@@ -36,6 +39,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   onSelectArticle,
   onInsertArticle,
   onBack,
+  navigation,
 }) => {
   const [tab, setTab] = useState<LibraryTab>('magazines');
   const [levelFilter, setLevelFilter] = useState<string>(() =>
@@ -52,9 +56,14 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
   /** L2→L3: which issue is open */
   const [selectedIssue, setSelectedIssue] = useState<MagazineIssue | null>(null);
   const [issueArticles, setIssueArticles] = useState<MagazineArticleStub[]>([]);
+  const [catalogArticles, setCatalogArticles] = useState<MagazineCatalogArticleStub[]>([]);
+  const [catalogTotal, setCatalogTotal] = useState(0);
+  const [catalogNextCursor, setCatalogNextCursor] = useState<string | null>(null);
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<MagazineSyncStatus | null>(null);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [loadingCatalogArticles, setLoadingCatalogArticles] = useState(false);
   const [loadingIssue, setLoadingIssue] = useState(false);
   const [loadingArticleId, setLoadingArticleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +73,8 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     : activeSourceId
       ? 'issues'
       : 'sources';
+  const isArticleCatalogFilter =
+    tab === 'magazines' && magLayer === 'sources' && levelFilter !== 'All';
 
   const activeSource = useMemo(
     () => sources.find((s) => s.id === activeSourceId) ?? null,
@@ -136,6 +147,48 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     }
   };
 
+  const loadCatalogArticlePage = useCallback(async (cursor?: string, append = false) => {
+    if (levelFilter === 'All') return;
+    if (!append) setCatalogArticles([]);
+    setLoadingCatalogArticles(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ level: levelFilter, limit: '24' });
+      if (topicQuery.trim()) params.set('q', topicQuery.trim());
+      if (cursor) params.set('cursor', cursor);
+      const res = await fetch(`/api/magazines/articles?${params.toString()}`);
+      const data = await readJson(res, 'articles');
+      if (!data.ok) {
+        throw new Error((data.error as { message?: string } | undefined)?.message || '加载文章失败');
+      }
+      const nextArticles = (data.articles as MagazineCatalogArticleStub[]) || [];
+      setCatalogArticles((current) => append ? [...current, ...nextArticles] : nextArticles);
+      setCatalogTotal(typeof data.total === 'number' ? data.total : nextArticles.length);
+      setCatalogNextCursor(typeof data.nextCursor === 'string' ? data.nextCursor : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '加载筛选文章失败');
+      if (!append) {
+        setCatalogTotal(0);
+        setCatalogNextCursor(null);
+      }
+    } finally {
+      setLoadingCatalogArticles(false);
+    }
+  }, [levelFilter, topicQuery]);
+
+  useEffect(() => {
+    if (!isArticleCatalogFilter) {
+      setCatalogArticles([]);
+      setCatalogTotal(0);
+      setCatalogNextCursor(null);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void loadCatalogArticlePage();
+    }, topicQuery.trim() ? 250 : 0);
+    return () => window.clearTimeout(timeout);
+  }, [catalogRefreshKey, isArticleCatalogFilter, loadCatalogArticlePage, topicQuery]);
+
   const loadCatalog = useCallback(async () => {
     setLoadingCatalog(true);
     setError(null);
@@ -194,6 +247,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
             });
             if (!data.running) {
               await loadCatalog();
+              setCatalogRefreshKey((value) => value + 1);
             }
           }
         } catch {
@@ -310,17 +364,12 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     }
   };
 
-  const headerTitle =
-    tab === 'magazines' && magLayer === 'articles' && selectedIssue
-      ? selectedIssue.issueLabel || selectedIssue.title
-      : tab === 'magazines' && magLayer === 'issues' && activeSource
-        ? activeSource.displayName
-        : '文章库';
-
   const searchPlaceholder =
     tab === 'mine'
       ? '搜索我的文章…'
-      : magLayer === 'articles'
+      : isArticleCatalogFilter
+        ? '搜索文章…'
+        : magLayer === 'articles'
         ? '搜索本期文章…'
         : magLayer === 'issues'
           ? '搜索期号…'
@@ -333,32 +382,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col selection:bg-[#FDE68A]">
-      <header className="px-6 py-5 flex items-center gap-3 border-b border-[#E8E2D5] bg-[#F8F6F0] sticky top-0 z-10">
-        <button
-          onClick={handleHeaderBack}
-          className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="font-serif text-2xl font-normal text-[#2C2723] truncate">
-            {headerTitle}
-          </h1>
-        </div>
-        {tab === 'magazines' && magLayer !== 'sources' && (
-          <div className="hidden sm:flex items-center gap-1 text-[10px] text-[#9A9286] shrink-0">
-            <span>杂志</span>
-            <span>›</span>
-            <span className={magLayer === 'issues' ? 'text-[#C35E37] font-semibold' : ''}>
-              期号
-            </span>
-            <span>›</span>
-            <span className={magLayer === 'articles' ? 'text-[#C35E37] font-semibold' : ''}>
-              文章
-            </span>
-          </div>
-        )}
-      </header>
+      <AppPageHeader onBack={handleHeaderBack} navigation={navigation} />
 
       {(showTopTabs || showCefr || showSearch) && (
         <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-4 space-y-3">
@@ -402,7 +426,10 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                   <button
                     key={lv}
                     type="button"
-                    onClick={() => setLevelFilter(lv)}
+                    onClick={() => {
+                      setLevelFilter(lv);
+                      if (lv === 'All') setTopicQuery('');
+                    }}
                     className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                       levelFilter === lv
                         ? 'bg-[#C35E37] text-white'
@@ -545,7 +572,67 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
               </p>
             </div>
 
-            {loadingCatalog ? (
+            {isArticleCatalogFilter ? (
+              <>
+                <p className="text-xs text-[#666056]" aria-live="polite">
+                  {catalogTotal > 0 ? `${catalogTotal} 篇 ${levelFilter} 文章` : `${levelFilter} 文章`}
+                </p>
+                {loadingCatalogArticles && catalogArticles.length === 0 ? (
+                  <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2" role="status">
+                    <Loader2 className="w-4 h-4 animate-spin" /> 加载文章…
+                  </p>
+                ) : catalogArticles.length === 0 ? (
+                  <p className="text-center text-[#888] py-12 text-sm">
+                    没有匹配的文章
+                  </p>
+                ) : (
+                  <>
+                    {catalogArticles.map((article) => (
+                      <button
+                        key={article.id}
+                        type="button"
+                        disabled={loadingArticleId === article.id}
+                        onClick={() => void openMagazineArticle(article)}
+                        className="w-full text-left bg-[#FAF8F3] hover:bg-[#F3EFE4] border border-[#E3DDD1] rounded-2xl p-5 shadow-2xs transition-all group disabled:opacity-60"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <h3 className="font-serif text-lg font-medium text-[#2A2621] group-hover:text-[#C35E37] transition-colors">
+                            {article.title}
+                          </h3>
+                          {loadingArticleId === article.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-[#C35E37] shrink-0" />
+                          ) : (
+                            <span className="shrink-0 px-2.5 py-0.5 bg-[#EFECE3] text-[#5B544C] rounded-full text-xs font-semibold">
+                              {article.level}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs sm:text-sm text-[#666056] mb-2 leading-relaxed line-clamp-2">
+                          {article.description}
+                        </p>
+                        <div className="flex flex-wrap gap-2 text-[11px] text-[#8A8377]">
+                          <span>{article.sourceName}</span>
+                          <span>·</span>
+                          <span>{article.issueLabel}</span>
+                          <span>·</span>
+                          <span>{article.wordCount} words</span>
+                        </div>
+                      </button>
+                    ))}
+                    {catalogNextCursor && (
+                      <button
+                        type="button"
+                        onClick={() => void loadCatalogArticlePage(catalogNextCursor, true)}
+                        disabled={loadingCatalogArticles}
+                        className="w-full border border-[#DDD6C8] bg-white hover:bg-[#F3EFE4] text-[#524B43] rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-60"
+                      >
+                        {loadingCatalogArticles ? '加载中…' : '加载更多'}
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
+            ) : loadingCatalog ? (
               <p className="text-center text-[#888] py-12 text-sm flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> 加载杂志…
               </p>

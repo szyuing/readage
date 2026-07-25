@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recommended Reading · Particles</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f7f4ed;
+        --surface: rgba(252, 250, 246, 0.94);
+        --surface-strong: #fffdf9;
+        --surface-soft: #f1ede4;
+        --line: #e1d9ca;
+        --line-strong: #d3c9b8;
+        --ink: #27231f;
+        --ink-soft: #635b50;
+        --ink-muted: #928879;
+        --accent: #b65332;
+        --accent-soft: #f8e8df;
+        --success: #3e7b5a;
+        --success-soft: #e5f0e7;
+        --warning: #a26519;
+        --warning-soft: #fff2cc;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 18px;
+        --shadow: 0 18px 48px rgba(47, 39, 30, 0.14), 0 2px 8px rgba(47, 39, 30, 0.06);
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", Arial, sans-serif;
+        --serif: Georgia, "Times New Roman", "Noto Serif SC", serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--sans);
+      }
+
+      #canvas { display: block; width: 100%; height: 100%; }
+
+      .topbar {
+        position: fixed;
+        inset: 0 0 auto;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 68px;
+        padding: 12px 24px;
+        border-bottom: 1px solid rgba(211, 201, 184, 0.72);
+        background: rgba(247, 244, 237, 0.84);
+        backdrop-filter: blur(14px);
+        pointer-events: none;
+      }
+
+      .topbar-brand {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 11px;
+      }
+
+      .topbar-mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        border: 1px solid #e6c1ae;
+        border-radius: 10px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font: 700 16px/1 var(--serif);
+      }
+
+      .topbar-titles { min-width: 0; }
+      .topbar-titles .eyebrow {
+        margin: 0 0 2px;
+        color: var(--ink-muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .14em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+      .topbar-titles h1 {
+        margin: 0;
+        overflow: hidden;
+        color: var(--ink);
+        font: 600 18px/1.25 var(--serif);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .topbar-actions {
+        display: inline-flex;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: rgba(255, 253, 249, .75);
+        pointer-events: auto;
+      }
+
+      .mode-btn {
+        min-height: 32px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        font: 600 12px/1 var(--sans);
+        transition: color .16s ease, background-color .16s ease, box-shadow .16s ease;
+      }
+      .mode-btn:hover { color: var(--ink-soft); background: var(--surface-soft); }
+      .mode-btn.active {
+        color: var(--accent);
+        background: var(--surface-strong);
+        box-shadow: 0 1px 3px rgba(47, 39, 30, .10);
+      }
+      .mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+      #hud {
+        position: fixed;
+        top: 88px;
+        left: 24px;
+        z-index: 20;
+        width: min(438px, calc(100vw - 48px));
+        max-height: calc(100vh - 112px);
+        overflow: auto;
+        border: 1px solid rgba(211, 201, 184, .94);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        pointer-events: none;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line-strong) transparent;
+      }
+
+      #hud::-webkit-scrollbar { width: 7px; }
+      #hud::-webkit-scrollbar-thumb { border-radius: 9px; background: var(--line-strong); }
+
+      .hud-head {
+        padding: 20px 22px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 253, 249, .72);
+      }
+      .hud-kicker-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 9px;
+      }
+      #hud .hud-kicker {
+        margin: 0;
+        color: var(--ink-muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .16em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+      .hud-mode {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--success);
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .hud-mode::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: '';
+      }
+      #hud .title {
+        margin: 0;
+        color: var(--ink);
+        font: 600 clamp(20px, 2.2vw, 25px)/1.25 var(--serif);
+        letter-spacing: -.015em;
+      }
+
+      .hud-body { padding: 15px 22px 16px; }
+      .section-label {
+        margin: 0 0 9px;
+        color: var(--ink-muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+
+      .pipeline-steps {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 5px;
+        margin: 0 0 13px;
+      }
+      .pipeline-steps span {
+        display: grid;
+        place-items: center;
+        min-height: 31px;
+        padding: 3px 4px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface-strong);
+        color: var(--ink-muted);
+        font-size: 10px;
+        font-weight: 600;
+        line-height: 1.1;
+        text-align: center;
+      }
+      .pipeline-steps span.active { border-color: #d98a6a; background: var(--accent-soft); color: var(--accent); }
+      .pipeline-steps span.done { border-color: #b8d5bf; background: var(--success-soft); color: var(--success); }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .meta-grid .row {
+        min-width: 0;
+        padding: 8px 10px 9px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: rgba(241, 237, 228, .56);
+      }
+      .meta-grid .row--wide { grid-column: 1 / -1; }
+      .meta-grid .label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--ink-muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .04em;
+      }
+      .meta-grid .value {
+        display: block;
+        overflow-wrap: anywhere;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 650;
+        line-height: 1.38;
+      }
+      .meta-grid .row--wide .value { font-size: 12px; font-weight: 600; }
+
+      #hud-reason {
+        margin-top: 9px;
+        padding: 10px 12px;
+        border: 1px solid #f0ce66;
+        border-radius: var(--radius-md);
+        background: var(--warning-soft);
+        color: #8a4d0d;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      #hud-reason:empty { display: none; }
+
+      .legend {
+        margin-top: 12px;
+        padding-top: 11px;
+        border-top: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 11px;
+        line-height: 1.65;
+      }
+      .legend strong { color: var(--ink); font-weight: 750; }
+
+      #status {
+        position: fixed;
+        right: 22px;
+        bottom: 20px;
+        z-index: 20;
+        max-width: min(420px, calc(100vw - 44px));
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: rgba(255, 253, 249, .86);
+        box-shadow: 0 4px 14px rgba(47, 39, 30, .08);
+        color: var(--ink-soft);
+        font-size: 11px;
+        line-height: 1.3;
+        pointer-events: none;
+      }
+      #status.live { border-color: #b8d5bf; background: var(--success-soft); color: var(--success); }
+      #status.demo { border-color: #f0ce66; background: var(--warning-soft); color: var(--warning); }
+
+      @media (max-width: 720px) {
+        .topbar { min-height: 60px; padding: 10px 14px; }
+        .topbar-mark { width: 30px; height: 30px; }
+        .topbar-titles h1 { font-size: 16px; }
+        .topbar-actions { gap: 2px; }
+        .mode-btn { min-height: 29px; padding: 0 8px; font-size: 11px; }
+        #hud {
+          top: 74px;
+          left: 12px;
+          width: calc(100vw - 24px);
+          max-height: calc(100vh - 90px);
+          border-radius: 15px;
+        }
+        .hud-head { padding: 16px 17px 15px; }
+        .hud-body { padding: 15px 17px 17px; }
+        .pipeline-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
+        .meta-grid { grid-template-columns: 1fr 1fr; gap: 7px; }
+        .meta-grid .row { padding: 9px 10px; }
+        #status { display: none; }
+      }
+
+      @media (max-width: 420px) {
+        .topbar-titles .eyebrow { display: none; }
+        .topbar-titles h1 { font-size: 15px; }
+        .mode-btn { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .meta-grid { grid-template-columns: 1fr; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .mode-btn { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="topbar-mark" aria-hidden="true">R</div>
+        <div class="topbar-titles">
+          <p class="eyebrow">English AI</p>
+          <h1>Learning Particles</h1>
+        </div>
+      </div>
+      <div class="topbar-actions" role="tablist" aria-label="Visualization mode">
+        <button type="button" class="mode-btn active" data-view-mode="vocab" role="tab">词汇熟练度</button>
+        <button type="button" class="mode-btn" data-view-mode="recommend" role="tab">推荐流水线</button>
+      </div>
+    </header>
+
+    <canvas id="canvas" aria-label="Recommendation particle visualization"></canvas>
+
+    <aside id="hud" aria-live="polite">
+      <div class="hud-head">
+        <div class="hud-kicker-row">
+          <p class="hud-kicker">Current step</p>
+          <span class="hud-mode">Real-time</span>
+        </div>
+        <p class="title" id="hud-title">等待主站真实推荐</p>
+      </div>
+      <div class="hud-body">
+        <p class="section-label">Pipeline</p>
+        <div class="pipeline-steps" id="pipeline-steps" aria-hidden="true">
+          <span data-step="catalog">全库</span>
+          <span data-step="filter">过滤</span>
+          <span data-step="score">打分</span>
+          <span data-step="shortlist">头部</span>
+          <span data-step="pick">挑选</span>
+          <span data-step="hydrate">打开</span>
+        </div>
+
+        <div class="meta-grid">
+          <div class="row">
+            <span class="label">流水线</span>
+            <span class="value" id="hud-pipeline">等待主站真实推荐</span>
+          </div>
+          <div class="row">
+            <span class="label">可见粒子</span>
+            <span class="value" id="hud-count">0</span>
+          </div>
+          <div class="row row--wide">
+            <span class="label">来源</span>
+            <span class="value" id="hud-source">—</span>
+          </div>
+          <div class="row row--wide">
+            <span class="label">统计</span>
+            <span class="value" id="hud-stats">—</span>
+          </div>
+          <div class="row">
+            <span class="label">耗时</span>
+            <span class="value" id="hud-ms">—</span>
+          </div>
+          <div class="row">
+            <span class="label">词 / 目标</span>
+            <span class="value" id="hud-words">—</span>
+          </div>
+          <div class="row row--wide">
+            <span class="label">详情</span>
+            <span class="value" id="hud-hits">—</span>
+          </div>
+        </div>
+
+        <div id="hud-reason"></div>
+
+        <div class="legend">
+          <strong>真实词汇</strong>
+          <span class="legend-vocab">段落停留≈曝光 · 点词≈薄弱信号 · 读完=本篇 lemma 标记。颜色=L0–L4，靠近中心=MS 更高。</span>
+        </div>
+      </div>
+    </aside>
+
+    <div id="status" class="demo">Demo · 完整流水线</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

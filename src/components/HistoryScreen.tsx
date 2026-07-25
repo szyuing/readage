@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Search, X, MessageSquare } from 'lucide-react';
+import { Search, X, MessageSquare } from 'lucide-react';
 import { Article, ArticleSession } from '../types';
+import { AppPageHeader } from './AppPageHeader';
 
 interface HistoryScreenProps {
   articles: Article[];
   sessions: Record<string, ArticleSession>;
   onSelectArticle: (article: Article) => void | Promise<void>;
   onBack: () => void;
+  navigation?: React.ReactNode;
 }
 
 export const HistoryScreen: React.FC<HistoryScreenProps> = ({
@@ -14,6 +16,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
   sessions,
   onSelectArticle,
   onBack,
+  navigation,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchInput, setShowSearchInput] = useState(false);
@@ -32,22 +35,11 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
-      <header className="px-6 py-5 flex items-center justify-between border-b border-[#E8E2D5] bg-[#F8F6F0] sticky top-0 z-10">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
-            title="Back"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h1 className="font-serif text-2xl font-normal text-[#2C2723]">文章历史</h1>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {showSearchInput ? (
+      <AppPageHeader
+        onBack={onBack}
+        navigation={navigation}
+        actions={
+          showSearchInput ? (
             <div className="flex items-center bg-white border border-[#DDD6C8] rounded-xl px-3 py-1.5">
               <Search className="w-4 h-4 text-[#888] mr-2" />
               <input
@@ -77,8 +69,7 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
               <Search className="w-5 h-5" />
             </button>
           )}
-        </div>
-      </header>
+      />
 
       <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-8 space-y-4">
         {filteredArticles.length === 0 ? (

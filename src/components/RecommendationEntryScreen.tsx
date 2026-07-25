@@ -1,5 +1,6 @@
 import React from 'react';
 import { ClipboardCheck, Library, RefreshCw, Sparkles } from 'lucide-react';
+import { AppPageHeader } from './AppPageHeader';
 
 interface RecommendationEntryScreenProps {
   isLoading: boolean;
@@ -8,6 +9,8 @@ interface RecommendationEntryScreenProps {
   onStartRecommendation: () => void;
   onOpenLibrary: () => void;
   onStartAssessment: () => void;
+  onBack: () => void;
+  navigation: React.ReactNode;
 }
 
 export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps> = ({
@@ -17,6 +20,8 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
   onStartRecommendation,
   onOpenLibrary,
   onStartAssessment,
+  onBack,
+  navigation,
 }) => {
   const message = isLoading
     ? phase === 'ai'
@@ -27,7 +32,9 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
       : 'Your next reading session starts here.';
 
   return (
-    <main className="min-h-[70vh] bg-[#F8F6F0] px-4 py-12 text-[#2B2723] sm:px-6">
+    <>
+      <AppPageHeader onBack={onBack} navigation={navigation} />
+      <main className="min-h-[70vh] bg-[#F8F6F0] px-4 py-12 text-[#2B2723] sm:px-6">
       <div className="mx-auto flex min-h-[58vh] w-full max-w-2xl items-center justify-center">
         <section
           className="w-full border border-[#E3DDD1] bg-[#FAF8F3] px-6 py-10 text-center shadow-sm sm:px-10"
@@ -74,6 +81,7 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
           )}
         </section>
       </div>
-    </main>
+      </main>
+    </>
   );
 };

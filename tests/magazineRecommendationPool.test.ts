@@ -6,6 +6,7 @@ import {
   clearMagazineRecommendationPoolCache,
   fetchMagazineRecommendationPool,
 } from '../src/lib/magazineRecommendationPool';
+import { articleContentFingerprint } from '../src/lib/articleContent';
 
 function article(id: string, content = ['hello world']): Article {
   return {
@@ -39,6 +40,48 @@ test('buildRecommendationArticlePool prefers history status while keeping richer
   assert.equal(mag?.status, 'Completed');
   assert.deepEqual(mag?.content, ['long magazine body with many words']);
   assert.equal(pool.length, 2);
+});
+
+test('deduplicates magazine articles with the same body across issue ids', () => {
+  const older = article('mag:wired:2026.05.02:story-1', [
+    'The same story is republished in another issue.',
+  ]);
+  const newer = article('mag:wired:2026.06.02:story-2', [
+    'The same story is republished in another issue.',
+  ]);
+
+  assert.equal(articleContentFingerprint(older), articleContentFingerprint(newer));
+  const pool = buildRecommendationArticlePool([newer, older], [], []);
+
+  assert.deepEqual(pool.map((item) => item.id), [newer.id]);
+});
+
+test('merges history metadata into the retained duplicate article', () => {
+  const retained = article('mag:wired:2026.06.02:story-2', ['Same body']);
+  const olderHistory = {
+    ...article('mag:wired:2026.05.02:story-1', ['Same body']),
+    status: 'Completed' as const,
+  };
+
+  const pool = buildRecommendationArticlePool([retained], [], [olderHistory]);
+
+  assert.equal(pool.length, 1);
+  assert.equal(pool[0]?.id, retained.id);
+  assert.equal(pool[0]?.status, 'Completed');
+});
+
+test('deduplicates duplicate magazine history rows when the remote pool is empty', () => {
+  const first = article('mag:wired:2026.06.02:story-2', ['Same body']);
+  const second = {
+    ...article('mag:wired:2026.05.02:story-1', [' Same   body ']),
+    status: 'Completed' as const,
+  };
+
+  const pool = buildRecommendationArticlePool([], [], [first, second]);
+
+  assert.equal(pool.length, 1);
+  assert.equal(pool[0]?.id, first.id);
+  assert.equal(pool[0]?.status, 'Completed');
 });
 
 test('fetchMagazineRecommendationPool caches successful magazine payloads for the same day', async () => {

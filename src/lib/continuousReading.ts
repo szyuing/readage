@@ -14,6 +14,12 @@ export interface ScrollEndCoordinates {
   scrollHeight: number;
 }
 
+export interface ViewportArticleBounds {
+  articleId: string;
+  top: number;
+  bottom: number;
+}
+
 export function hasArticleExitedViewport(lastParagraphBottom: number, viewportTop = 0): boolean {
   return Number.isFinite(lastParagraphBottom) && lastParagraphBottom <= viewportTop;
 }
@@ -29,6 +35,14 @@ export function isLeftSwipeGesture(
   const verticalDistance = Math.abs(deltaY);
   return deltaX <= -minimumDistance
     && horizontalDistance > verticalDistance * horizontalDominance;
+}
+
+/** Returns the first article that has not completely scrolled past the viewport. */
+export function selectCurrentContinuousArticleId(
+  articles: readonly ViewportArticleBounds[],
+  viewportTop = 0,
+): string | null {
+  return articles.find(({ bottom }) => bottom > viewportTop)?.articleId ?? null;
 }
 
 /**

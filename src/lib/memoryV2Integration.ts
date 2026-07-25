@@ -8,6 +8,11 @@ import { useCallback, useRef } from 'react';
 import { useMemorySystem } from './memoryV2/hooks';
 import { toLemma } from './proficiency';
 import type { ReadingLearningUnit } from './readingExposure';
+import {
+  emitVocabClick,
+  emitVocabExposure,
+  toVocabSnapshot,
+} from './vocabTelemetry';
 
 type MemoryEventRecorder = (
   wordId: string,
@@ -104,25 +109,51 @@ export async function recordParagraphExposureWithRollback({
 /**
  * Complete Memory V2 integration hook for ReadingScreen.
  * It tracks exposed occurrence ids across paragraph visibility and fast clicks.
+ *
+ * `streamKey` resets the in-memory occurrence set when the reading stream
+ * changes (e.g. primary article id). Within one continuous recommendation
+ * stream, callers pass the real `articleId` for each paragraph/click so later
+ * articles still write Memory V2 evidence.
  */
-export function useMemoryV2Integration(articleId: string) {
-  const { recordExposure, recordExposures, recordClick } = useMemorySystem();
+export function useMemoryV2Integration(streamKey: string) {
+  const {
+    recordExposure,
+    recordExposures,
+    recordClick,
+    memorySystem,
+    userId,
+  } = useMemorySystem();
   const exposureStateRef = useRef({
-    articleId,
+    streamKey,
     occurrenceIds: new Set<string>(),
   });
 
-  if (exposureStateRef.current.articleId !== articleId) {
+  if (exposureStateRef.current.streamKey !== streamKey) {
     exposureStateRef.current = {
-      articleId,
+      streamKey,
       occurrenceIds: new Set<string>(),
     };
   }
+
+  const snapshotWords = useCallback(
+    async (wordIds: readonly string[]) => {
+      const unique = [...new Set(wordIds.filter(Boolean))];
+      if (unique.length === 0) return [];
+      try {
+        const map = await memorySystem.getBatchWordProficiency(userId, unique);
+        return unique.map((wordId) => toVocabSnapshot(wordId, map.get(wordId) ?? null));
+      } catch {
+        return unique.map((wordId) => toVocabSnapshot(wordId, null));
+      }
+    },
+    [memorySystem, userId],
+  );
 
   const recordParagraphExposure = useCallback(
     async (
       paragraphIndex: number,
       units: readonly ReadingLearningUnit[],
+      articleId: string = streamKey,
     ) => {
       try {
         await recordParagraphExposureWithRollback({
@@ -132,17 +163,21 @@ export function useMemoryV2Integration(articleId: string) {
           exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
           recordExposures,
         });
+        // Real Memory V2 write succeeded → notify vocab particle view
+        const words = await snapshotWords(units.map((unit) => unit.wordId));
+        emitVocabExposure({ articleId, paragraphIndex, words });
       } catch (error) {
         console.error('Failed to record paragraph exposures:', error);
       }
     },
-    [articleId, recordExposures],
+    [streamKey, recordExposures, snapshotWords],
   );
 
   const recordWordClick = useCallback(
     async (
       unit: ReadingLearningUnit,
       paragraphIndex: number,
+      articleId: string = streamKey,
     ) => {
       try {
         await recordMemoryClickWithExposure({
@@ -153,16 +188,21 @@ export function useMemoryV2Integration(articleId: string) {
           recordExposure,
           recordClick,
         });
+        const [word] = await snapshotWords([unit.wordId]);
+        if (word) {
+          emitVocabClick({ articleId, paragraphIndex, word });
+        }
       } catch (error) {
         console.error('Failed to record click for', unit.wordId, error);
       }
     },
-    [articleId, recordClick, recordExposure],
+    [streamKey, recordClick, recordExposure, snapshotWords],
   );
 
   return {
     recordParagraphExposure,
     recordWordClick,
+    snapshotWords,
   };
 }
 

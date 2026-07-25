@@ -37,11 +37,17 @@ import {
   buildReadingAdvancePayload,
   hasArticleExitedViewport,
   isLeftSwipeGesture,
+  selectCurrentContinuousArticleId,
 } from '../lib/continuousReading';
 import { useMemoryV2Integration } from '../lib/memoryV2Integration';
 import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { formatSelectionQuote } from '../lib/readingSelection';
 import { WordCardPanel } from './WordCardPanel';
+import {
+  emitVocabArticleComplete,
+  startVocabSession,
+  toVocabSnapshot,
+} from '../lib/vocabTelemetry';
 
 let recommendationNavigationHintShown = false;
 
@@ -49,6 +55,8 @@ const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
 interface ReadingScreenProps {
   article: Article;
+  /** App-level navigation rendered in place of the article title header. */
+  navigation?: React.ReactNode;
   /** Live job from the independent import module (translate + rate). */
   importJob?: ImportJob | null;
   onRetryImport?: () => void;
@@ -78,6 +86,7 @@ interface ReadingScreenProps {
 
 export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   article,
+  navigation,
   importJob = null,
   onRetryImport,
   isRewriting = false,
@@ -121,7 +130,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [showNavigationHint, setShowNavigationHint] = useState(false);
 
   // Memory V2.2 集成
-  const { recordParagraphExposure, recordWordClick } = useMemoryV2Integration(article.id);
+  const { recordParagraphExposure, recordWordClick, snapshotWords } = useMemoryV2Integration(article.id);
+  const snapshotWordsRef = useRef(snapshotWords);
+  useEffect(() => {
+    snapshotWordsRef.current = snapshotWords;
+  }, [snapshotWords]);
 
   // Restore chat when switching articles / session
   useEffect(() => {
@@ -131,6 +144,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     setWordCardOpen(false);
     setGrammarResult(null);
     setIsExplaining(false);
+    // Real vocab particle session for this article (due/tracked lemmas if known)
+    const dueWords = (trackedLemmas || []).slice(0, 40).map((wordId) => toVocabSnapshot(wordId, null));
+    startVocabSession({ articleId: article.id, dueWords });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id]);
 
@@ -146,19 +162,28 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   const contentRef = useRef<HTMLDivElement>(null);
   const wordCardAbortRef = useRef<AbortController | null>(null);
-  const exposedLemmasRef = useRef<Set<string>>(new Set());
+  /** Staged lemmas per article id for continuous-stream completion payloads. */
+  const exposedLemmasByArticleRef = useRef(new Map<string, Set<string>>());
   const onExposuresRef = useRef(onExposures);
   const onReadingCompleteRef = useRef(onReadingComplete);
   const onAdvanceRef = useRef(onAdvance);
   const hasAdvancedRef = useRef(false);
   const suppressNextWordClickRef = useRef(false);
   const swipeStartRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const touchSwipeStartRef = useRef<{ identifier: number; x: number; y: number } | null>(null);
+  const pendingSwipeScrollArticleIdRef = useRef<string | null>(null);
   const completedContinuousArticleIdsRef = useRef(new Set<string>());
   const continuousArticlesRef = useRef(continuousArticles);
+  const primaryArticleRef = useRef(article);
+  const exposureObserveNewRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     continuousArticlesRef.current = continuousArticles;
   }, [continuousArticles]);
+
+  useEffect(() => {
+    primaryArticleRef.current = article;
+  }, [article]);
 
   useEffect(() => {
     return () => {
@@ -180,7 +205,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
   useEffect(() => {
     hasAdvancedRef.current = false;
-    exposedLemmasRef.current = new Set();
+    exposedLemmasByArticleRef.current = new Map();
     completedContinuousArticleIdsRef.current.clear();
     setArticleVisible(false);
     const frame = window.requestAnimationFrame(() => {
@@ -202,6 +227,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     return () => window.clearTimeout(timer);
   }, [showNavigationHint]);
 
+  const stagedExposuresFor = (articleId: string): Set<string> => {
+    let staged = exposedLemmasByArticleRef.current.get(articleId);
+    if (!staged) {
+      staged = new Set();
+      exposedLemmasByArticleRef.current.set(articleId, staged);
+    }
+    return staged;
+  };
+
   // A paragraph counts as read only after it stays at least 60% visible for 800ms.
   useEffect(() => {
     const container = contentRef.current;
@@ -210,8 +244,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     let isActive = true;
     const visibleParagraphs = new Set<Element>();
     const completedParagraphs = new Set<Element>();
+    const observedParagraphs = new Set<Element>();
     const exposureTimers = new Map<Element, number>();
-    exposedLemmasRef.current = new Set();
+    exposedLemmasByArticleRef.current = new Map();
 
     const clearExposureTimer = (paragraph: Element) => {
       const timerId = exposureTimers.get(paragraph);
@@ -223,6 +258,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     const finishSingleReading = () => {
       if (!isActive || hasAdvancedRef.current || mode === 'recommendation-feed') return;
       hasAdvancedRef.current = true;
+      const exposed = [...(exposedLemmasByArticleRef.current.get(article.id) ?? new Set<string>())];
+      void snapshotWordsRef.current(exposed).then((words) => {
+        emitVocabArticleComplete({
+          articleId: article.id,
+          exposedLemmas: exposed,
+          words,
+        });
+      });
       onReadingCompleteRef.current?.();
     };
 
@@ -258,25 +301,31 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               || !visibleParagraphs.has(paragraph)
             ) return;
 
+            const primary = primaryArticleRef.current;
             const paragraphIndex = Number(paragraph.dataset.readingParagraph);
-            const paragraphArticleId = paragraph.dataset.readingArticleId || article.id;
-            const paragraphArticle = paragraphArticleId === article.id
-              ? article
+            const paragraphArticleId = paragraph.dataset.readingArticleId || primary.id;
+            const paragraphArticle = paragraphArticleId === primary.id
+              ? primary
               : continuousArticlesRef.current?.find((candidate) => candidate.id === paragraphArticleId);
             const paragraphText = paragraphArticle?.content[paragraphIndex] ?? paragraph.textContent ?? '';
-            const learningUnits = extractLearningUnits(paragraphText, highlightTerms);
+            const articleHighlightTerms = [
+              ...(paragraphArticle?.keyWords || []),
+              ...(paragraphArticle?.embeddedReviewWords || []),
+            ];
+            const learningUnits = extractLearningUnits(paragraphText, articleHighlightTerms);
+            const staged = stagedExposuresFor(paragraphArticleId);
             const newWordIds = [...new Set(
               learningUnits.map((unit) => unit.wordId),
-            )].filter((wordId) => !exposedLemmasRef.current.has(wordId));
+            )].filter((wordId) => !staged.has(wordId));
 
-            newWordIds.forEach((wordId) => exposedLemmasRef.current.add(wordId));
+            newWordIds.forEach((wordId) => staged.add(wordId));
             completedParagraphs.add(paragraph);
             observer.unobserve(paragraph);
             visibleParagraphs.delete(paragraph);
 
-            // Memory V2.2: 记录段落曝光
-            if (learningUnits.length > 0 && paragraphArticleId === article.id) {
-              recordParagraphExposure(paragraphIndex, learningUnits).catch(err =>
+            // Memory V2.2: record for every article in the continuous stream
+            if (learningUnits.length > 0) {
+              recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId).catch(err =>
                 console.error('Memory V2.2 exposure recording failed:', err)
               );
             }
@@ -284,12 +333,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             if (newWordIds.length > 0 && mode === 'single') {
               onExposuresRef.current?.(newWordIds);
             }
-            if (
-              mode === 'single'
-              && paragraphs.length > 0
-              && completedParagraphs.size === paragraphs.length
-            ) {
-              finishSingleReading();
+            if (mode === 'single') {
+              const paragraphCount = container.querySelectorAll('[data-reading-paragraph]').length;
+              if (paragraphCount > 0 && completedParagraphs.size === paragraphCount) {
+                finishSingleReading();
+              }
             }
           }, 800);
 
@@ -299,10 +347,20 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       { threshold: Array.from({ length: 101 }, (_, index) => index / 100) },
     );
 
-    const paragraphs = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-reading-paragraph]')
-    ) as HTMLElement[];
-    paragraphs.forEach((paragraph) => observer.observe(paragraph));
+    const observeNewParagraphs = () => {
+      if (!isActive) return;
+      const paragraphs = Array.from(
+        container.querySelectorAll('[data-reading-paragraph]')
+      ) as HTMLElement[];
+      for (const paragraph of paragraphs) {
+        if (completedParagraphs.has(paragraph) || observedParagraphs.has(paragraph)) continue;
+        observedParagraphs.add(paragraph);
+        observer.observe(paragraph);
+      }
+    };
+
+    exposureObserveNewRef.current = observeNewParagraphs;
+    observeNewParagraphs();
 
     const pauseExposureTracking = () => {
       exposureTimers.forEach((timerId) => window.clearTimeout(timerId));
@@ -313,7 +371,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     const handleVisibilityChange = () => {
       pauseExposureTracking();
       if (document.visibilityState !== 'visible') return;
-      paragraphs.forEach((paragraph) => {
+      observedParagraphs.forEach((paragraph) => {
         if (completedParagraphs.has(paragraph)) return;
         observer.unobserve(paragraph);
         observer.observe(paragraph);
@@ -324,25 +382,51 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
     return () => {
       isActive = false;
+      exposureObserveNewRef.current = null;
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       observer.disconnect();
       pauseExposureTracking();
       completedParagraphs.clear();
+      observedParagraphs.clear();
     };
     // The exposure set intentionally resets only when the article lifecycle changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [article.id, mode]);
 
-  // Recommendation pages advance when the reader explicitly reaches the end.
-  // Paragraph visibility still records exposure, but never changes the article
-  // before the reader has scrolled through it.
+  // When continuous articles are appended, observe their new paragraphs without
+  // resetting exposure progress for articles already on screen.
+  useEffect(() => {
+    if (mode !== 'recommendation-feed') return;
+    const frame = window.requestAnimationFrame(() => {
+      exposureObserveNewRef.current?.();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [mode, continuousArticles]);
+
+  useEffect(() => {
+    const skippedArticleId = pendingSwipeScrollArticleIdRef.current;
+    if (!skippedArticleId) return;
+    const sections: HTMLElement[] = contentRef.current
+      ? Array.from(contentRef.current.querySelectorAll<HTMLElement>('[data-reading-article-section]'))
+      : [];
+    const skippedIndex = sections.findIndex(
+      (section) => section.dataset.readingArticleId === skippedArticleId,
+    );
+    const nextSection = skippedIndex >= 0 ? sections[skippedIndex + 1] : undefined;
+    if (!nextSection) return;
+    pendingSwipeScrollArticleIdRef.current = null;
+    nextSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [continuousArticles]);
+
+  // Recommendation pages advance when the last paragraph fully leaves the viewport.
+  // Paragraph visibility still records exposure, but never advances before that.
   useEffect(() => {
     if (mode !== 'recommendation-feed') return;
 
     let ticking = false;
     const checkScrollEnd = () => {
       ticking = false;
-      if (hasAdvancedRef.current || document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') return;
       const sections = contentRef.current?.querySelectorAll<HTMLElement>('[data-reading-article-section]');
       if (!sections) return;
       let completedOne = false;
@@ -354,7 +438,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         if (!lastParagraph || !hasArticleExitedViewport(lastParagraph.getBoundingClientRect().bottom)) return;
         completedContinuousArticleIdsRef.current.add(articleId);
         completedOne = true;
-        const exposed = articleId === article.id ? exposedLemmasRef.current : new Set<string>();
+        const exposed = exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>();
+        const exposedList = [...exposed];
+        void snapshotWordsRef.current(exposedList).then((words) => {
+          emitVocabArticleComplete({
+            articleId,
+            exposedLemmas: exposedList,
+            words,
+          });
+        });
         onAdvanceRef.current?.(
           buildReadingAdvancePayload(articleId, 'completed', exposed)
         );
@@ -372,6 +464,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     window.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('wheel', handleScroll, { passive: true });
     window.addEventListener('touchend', handleScroll, { passive: true });
+    // Re-check after continuousArticles append in case the previous article already left.
+    window.requestAnimationFrame(checkScrollEnd);
     return () => {
       document.removeEventListener('scroll', handleScroll, true);
       window.removeEventListener('scroll', handleScroll);
@@ -462,17 +556,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
     onWordClick?.(cleanWord, readingArticle.id);
 
-    // Memory V2.2: 记录单词点击
+    // Memory V2.2: record clicks for any article in the continuous stream
     const paragraphElement = (e.target as HTMLElement).closest('[data-reading-paragraph]');
     const learningUnit = findLearningUnitAtTokenIndex(
       paragraph,
       readingHighlightTerms,
       tokenIndex,
     );
-    if (paragraphElement && learningUnit && readingArticle.id === article.id) {
+    if (paragraphElement && learningUnit) {
       const paragraphIndex = Number(paragraphElement.getAttribute('data-reading-paragraph'));
 
-      recordWordClick(learningUnit, paragraphIndex).catch(err =>
+      recordWordClick(learningUnit, paragraphIndex, readingArticle.id).catch(err =>
         console.error('Memory V2.2 click recording failed:', err)
       );
     }
@@ -652,16 +746,56 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     return Boolean(target.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"]'));
   };
 
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (
-      mode !== 'recommendation-feed'
-      || Boolean(continuousArticles?.length)
-      || !event.isPrimary
-      || !['touch', 'pen'].includes(event.pointerType)
-      || shouldIgnoreSwipeTarget(event.target)
-    ) return;
+  const canStartSwipe = (target: EventTarget | null): boolean => {
+    if (mode !== 'recommendation-feed' || shouldIgnoreSwipeTarget(target)) return false;
+    const selection = window.getSelection();
+    return !selection || selection.isCollapsed;
+  };
+
+  const getCurrentContinuousArticleId = (): string => {
+    const sections: HTMLElement[] = contentRef.current
+      ? Array.from(contentRef.current.querySelectorAll<HTMLElement>('[data-reading-article-section]'))
+      : [];
+    return selectCurrentContinuousArticleId(
+      sections.map((section) => {
+        const bounds = section.getBoundingClientRect();
+        return {
+          articleId: section.dataset.readingArticleId || article.id,
+          top: bounds.top,
+          bottom: bounds.bottom,
+        };
+      }),
+    ) ?? article.id;
+  };
+
+  const handleLeftSwipe = (startX: number, startY: number, endX: number, endY: number) => {
+    if (!isLeftSwipeGesture({ startX, startY, endX, endY })) return;
+    const articleId = getCurrentContinuousArticleId();
+    if (completedContinuousArticleIdsRef.current.has(articleId)) return;
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
+
+    completedContinuousArticleIdsRef.current.add(articleId);
+    pendingSwipeScrollArticleIdRef.current = articleId;
+    suppressNextWordClickRef.current = true;
+    window.setTimeout(() => {
+      suppressNextWordClickRef.current = false;
+    }, 0);
+    onAdvanceRef.current?.(
+      buildReadingAdvancePayload(
+        articleId,
+        'skipped',
+        exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>(),
+      )
+    );
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      !event.isPrimary
+      || !['touch', 'pen'].includes(event.pointerType)
+      || !canStartSwipe(event.target)
+    ) return;
     swipeStartRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
   };
 
@@ -670,32 +804,40 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     swipeStartRef.current = null;
     if (
       mode !== 'recommendation-feed'
-      || Boolean(continuousArticles?.length)
       || !start
       || start.pointerId !== event.pointerId
-      || hasAdvancedRef.current
     ) return;
-    const selection = window.getSelection();
-    if (selection && !selection.isCollapsed) return;
-    if (!isLeftSwipeGesture({
-      startX: start.x,
-      startY: start.y,
-      endX: event.clientX,
-      endY: event.clientY,
-    })) return;
-
-    hasAdvancedRef.current = true;
-    suppressNextWordClickRef.current = true;
-    window.setTimeout(() => {
-      suppressNextWordClickRef.current = false;
-    }, 0);
-    onAdvanceRef.current?.(
-      buildReadingAdvancePayload(article.id, 'skipped', exposedLemmasRef.current)
-    );
+    handleLeftSwipe(start.x, start.y, event.clientX, event.clientY);
   };
 
   const handlePointerCancel = () => {
     swipeStartRef.current = null;
+  };
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1 || !canStartSwipe(event.target)) return;
+    const touch = event.touches[0];
+    touchSwipeStartRef.current = { identifier: touch.identifier, x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = touchSwipeStartRef.current;
+    touchSwipeStartRef.current = null;
+    if (mode !== 'recommendation-feed' || !start) return;
+    let touch: Touch | null = null;
+    for (let index = 0; index < event.changedTouches.length; index += 1) {
+      const changedTouch = event.changedTouches.item(index);
+      if (changedTouch?.identifier === start.identifier) {
+        touch = changedTouch;
+        break;
+      }
+    }
+    if (!touch) return;
+    handleLeftSwipe(start.x, start.y, touch.clientX, touch.clientY);
+  };
+
+  const handleTouchCancel = () => {
+    touchSwipeStartRef.current = null;
   };
 
   return (
@@ -703,6 +845,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
       style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y' : undefined }}
       className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out ${
         articleVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2'
@@ -723,12 +868,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div className="text-center min-w-0 flex-1 px-2">
-          <h1 className="font-serif text-base sm:text-lg font-bold leading-tight text-[#2C2723] truncate max-w-[70vw] sm:max-w-md mx-auto">
+        <div className="text-center min-w-0 flex-1 px-2 flex justify-center">
+          {navigation || (
+          <>
+          <h1 className="font-serif text-xl sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[70vw] sm:max-w-lg mx-auto">
             {article.title}
           </h1>
           {(article.levelRating || article.level || article.source) && (
-            <p className="text-[10px] text-[#8C8478] mt-0.5">
+            <p className="text-xs text-[#8C8478] mt-1">
               {/* One CEFR badge per article (levelRating is the official grade when present). */}
               {(article.levelRating?.level || article.level) && (
                 <button
@@ -748,6 +895,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               )}
               {article.source && <span>{article.source}</span>}
             </p>
+          )}
+          </>
           )}
         </div>
 
@@ -861,6 +1010,31 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       </header>
 
       <main className="flex-1 max-w-3xl w-full mx-auto px-6 py-8 sm:py-12 pb-36">
+        <header className="mb-8">
+          <h2 className="font-serif text-2xl sm:text-3xl font-bold leading-tight text-[#2A2621]">
+            {article.title}
+          </h2>
+          {(article.levelRating?.level || article.level || article.source) && (
+            <p className="mt-2 text-[10px] text-[#8C8478]">
+              {(article.levelRating?.level || article.level) && (
+                <button
+                  type="button"
+                  onClick={() => setShowLevelDetail((v) => !v)}
+                  className="hover:text-[#C35E37] underline-offset-2 hover:underline"
+                  title="查看本篇唯一 CEFR 评级"
+                >
+                  CEFR {article.levelRating?.level || article.level}
+                  {typeof article.levelRating?.difficultyScore === 'number' && (
+                    <span> · 难度 {article.levelRating.difficultyScore}</span>
+                  )}
+                </button>
+              )}
+              {(article.levelRating?.level || article.level) && article.source && <span> · </span>}
+              {article.source && <span>{article.source}</span>}
+            </p>
+          )}
+        </header>
+
         {(article.parentArticleId || article.source === 'level_rewrite') && (
           <div className="mb-4 p-3 bg-[#FDF2F8] border border-[#FBCFE8] rounded-xl text-xs text-[#9D174D] flex items-start justify-between gap-3">
             <div>
