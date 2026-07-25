@@ -172,7 +172,6 @@ function logRecommendationSource(
 export default function App() {
   const builtInLibrary = LIBRARY_ARTICLES;
   const [route, setRoute] = useState<AppRoute>(getInitialAppRoute);
-  const recommendationEntryStartedRef = useRef(false);
   const [magazinePool, setMagazinePool] = useState<Article[]>(() =>
     getCachedMagazineRecommendationPool()
   );
@@ -1025,7 +1024,6 @@ export default function App() {
       navigate({ kind: 'assessment' }, { replace: true });
       return;
     }
-    recommendationEntryStartedRef.current = true;
     void startRecommendationReading(
       'English Idioms & Daily Practice',
       dueLemmas.slice(0, 5)
@@ -1039,19 +1037,6 @@ export default function App() {
     navigate({ kind: 'assessment' }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assessmentResult, route.kind]);
-
-  useEffect(() => {
-    // Only auto-start Recommend after the user has completed the rating flow.
-    if (!assessmentResult) return;
-    if (route.kind !== 'recommendation' || recommendationEntryStartedRef.current) return;
-    recommendationEntryStartedRef.current = true;
-    void startRecommendationReading(
-      'English Idioms & Daily Practice',
-      dueLemmas.slice(0, 5)
-    );
-    // The recommendation entry starts once per explicit visit to `/`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.kind, assessmentResult]);
 
   const handleRecommendationAdvance = (payload: ReadingAdvancePayload) => {
     const current = recommendationFeedRef.current;
@@ -1213,12 +1198,8 @@ export default function App() {
       navigate({ kind: 'assessment' }, { replace: true });
       return;
     }
-    recommendationEntryStartedRef.current = false;
     resetRecommendationFeed();
     navigate({ kind: 'recommendation' });
-    if (route.kind === 'recommendation') {
-      startRecommendationFromEntry();
-    }
   };
   const goBackOrFallback = (fallback: () => void) => {
     const currentIndex = readAppHistoryIndex(window.history.state);

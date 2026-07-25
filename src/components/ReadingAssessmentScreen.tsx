@@ -383,713 +383,744 @@ export const ReadingAssessmentScreen: React.FC<ReadingAssessmentScreenProps> = (
     });
   }, [stage, result, inference, onComplete]);
 
-
-
   return (
     <div className="reading-assessment">
-      <main className="app-shell">
-        <header className="site-header">
-          <button className="brand" onClick={restart} aria-label="回到测试首页">
-            <span className="brand-mark">i+1</span>
-            <span className="brand-title">
-              <strong>CEFR 阅读能力评测</strong>
-              <small>English Reading Assessment</small>
-            </span>
+    <main className="app-shell">
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+
+      <header className="site-header">
+        <button className="brand" onClick={restart} aria-label="回到测试首页">
+          <span className="brand-mark">i+1</span>
+          <span>
+            <strong>英语测试</strong>
+            <small>CEFR 阅读定级</small>
+          </span>
+        </button>
+        <div className="header-note" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span className="live-dot" />
+          <span>Rule-based MVP</span>
+          <button type="button" className="text-button" onClick={onBack}>
+            返回应用
           </button>
-          <div className="header-actions">
-            <span className="ai-badge">AI 智能评估</span>
-            <button type="button" className="nav-back-button" onClick={onBack}>
-              ✕ 返回应用
-            </button>
+        </div>
+      </header>
+
+      <nav className="progress" aria-label="测试进度">
+        {[
+          ["01", "背景粗定位"],
+          ["02", "阅读实测"],
+          ["03", "推荐结果"],
+        ].map(([number, label], index) => (
+          <div
+            key={number}
+            className={`progress-item ${progressStep >= index + 1 ? "active" : ""}`}
+          >
+            <span>{number}</span>
+            <p>{label}</p>
           </div>
-        </header>
+        ))}
+      </nav>
 
-        <nav className="progress-nav" aria-label="测试进度">
-          {[
-            ["01", "基础自评"],
-            ["02", "阅读实测"],
-            ["03", "能力报告"],
-          ].map(([number, label], index) => (
-            <div
-              key={number}
-              className={`progress-step ${progressStep >= index + 1 ? "active" : ""} ${
-                progressStep === index + 1 ? "current" : ""
-              }`}
-            >
-              <span className="step-num">{number}</span>
-              <span className="step-label">{label}</span>
-            </div>
-          ))}
-        </nav>
-
-        {stage === "questionnaire" && (
-          <section className="questionnaire-container">
-            <div className="hero-banner">
-              <div className="hero-badge">READING LEVEL PLACEMENT</div>
+      {stage === "questionnaire" && (
+        <section className="questionnaire-layout">
+          <aside className="intro-panel">
+            <div>
+              <p className="kicker">Find your reading edge</p>
               <h1>
-                精准找到你的阅读起点，<br />
-                让每一篇英文都<span>读得刚刚好</span>。
+                先找到起点，
+                <br />
+                再读得<span>刚刚好</span>。
               </h1>
-              <p className="hero-desc">
-                结合学习阶段与历史考试成绩进行初始匹配，通过真实语篇阅读与多维理解测试精准校准，帮助系统为你推荐难度适宜的最佳读物。
+              <p className="intro-copy">
+                用已有成绩和阅读自评选择起始套题，再用真实阅读表现校准。六个
+                CEFR 档位均可完成实测。
               </p>
-              <div className="feature-chips">
-                <div className="chip-item">
-                  <strong>6 大级别</strong>
-                  <span>CEFR A1 ~ C2 覆盖</span>
-                </div>
-                <div className="chip-item">
-                  <strong>语篇实测</strong>
-                  <span>词汇/句子/语篇三维校验</span>
-                </div>
-                <div className="chip-item">
-                  <strong>~5 分钟</strong>
-                  <span>无负担快速评估</span>
-                </div>
+            </div>
+            <div className="mini-legend">
+              <div>
+                <strong>6</strong>
+                <span>CEFR 档位</span>
               </div>
+              <div>
+                <strong>30</strong>
+                <span>固定套题</span>
+              </div>
+              <div>
+                <strong>5–8</strong>
+                <span>分钟完成</span>
+              </div>
+            </div>
+            {previousResult && (
+              <div className="click-hint" style={{ marginTop: 16 }}>
+                <span>✓</span>
+                <p>
+                  应用当前等级 <strong>{previousResult.recommendedBand}</strong>
+                  <br />
+                  测试结果会同步到推荐、文库筛选与改写目标。
+                </p>
+              </div>
+            )}
+          </aside>
 
-              {previousResult && (
-                <div className="previous-result-hint">
-                  <span className="check-icon">✓</span>
-                  <div>
-                    <span>当前应用阅读等级：<strong>{previousResult.recommendedBand}</strong></span>
-                    <small>重新测试可随时更新推荐难度与改写目标</small>
-                  </div>
-                </div>
-              )}
+          <form className="form-card" onSubmit={submitQuestionnaire}>
+            <div className="form-heading">
+              <div>
+                <p className="section-index">STEP 01</p>
+                <h2>告诉我们你现在在哪里</h2>
+              </div>
+              <span className="required-note">约 1 分钟</span>
             </div>
 
-            <form className="form-card" onSubmit={submitQuestionnaire}>
-              <div className="form-header">
+            <div className="preset-strip">
+              <span>现场演示：快速填入对应用户</span>
+              <div>
+                {BAND_ORDER.map((band) => (
+                  <button type="button" key={band} onClick={() => applyPreset(band)}>
+                    {band}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="field-grid two">
+              <label className="field">
+                <span>当前阶段</span>
+                <select
+                  value={educationStage}
+                  onChange={(event) => setEducationStage(event.target.value)}
+                >
+                  <option value="middle_school">初中</option>
+                  <option value="high_school">高中</option>
+                  <option value="university">大学</option>
+                  <option value="graduated">已毕业</option>
+                  <option value="other">其他</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>主要阅读目标</span>
+                <select value={goal} onChange={(event) => setGoal(event.target.value)}>
+                  <option value="exam">通过考试</option>
+                  <option value="originals">阅读英文原著</option>
+                  <option value="knowledge">获取专业知识</option>
+                  <option value="daily">日常英语提升</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset className="self-level">
+              <legend>你的英文阅读状态更接近哪一种？</legend>
+              <div className="choice-cards">
+                {[
+                  ["difficult", "仍然吃力", "简单英文也常常需要翻译"],
+                  ["general", "可以阅读", "能读一般文章，但偶尔卡住"],
+                  ["experienced", "稳定阅读", "有持续阅读英文原著的经验"],
+                ].map(([value, title, description]) => (
+                  <label
+                    key={value}
+                    className={`choice-card ${selfLevel === value ? "selected" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="selfLevel"
+                      value={value}
+                      checked={selfLevel === value}
+                      onChange={(event) => setSelfLevel(event.target.value)}
+                    />
+                    <span className="radio-dot" />
+                    <strong>{title}</strong>
+                    <small>{description}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className="exam-section">
+              <div className="exam-title">
                 <div>
-                  <span className="step-tag">STEP 01</span>
-                  <h2>填写阅读背景</h2>
+                  <h3>已有考试成绩</h3>
+                  <p>有什么填什么；可以添加多条，也可以留空。</p>
                 </div>
-                <span className="time-estimate">⏱ 约 1 分钟</span>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => setExams((current) => [...current, createExam()])}
+                >
+                  ＋ 添加成绩
+                </button>
               </div>
 
-              <div className="preset-bar">
-                <span className="preset-label">⚡ 快速预设：</span>
-                <div className="preset-buttons">
-                  {BAND_ORDER.map((band) => (
-                    <button
-                      type="button"
-                      key={band}
-                      className="preset-btn"
-                      onClick={() => applyPreset(band)}
-                    >
-                      {band}
-                    </button>
-                  ))}
-                </div>
+              {exams.length === 0 && (
+                <button
+                  className="empty-exams"
+                  type="button"
+                  onClick={() => setExams([createExam()])}
+                >
+                  <span>＋</span>
+                  没有成绩也没关系，点击可添加
+                </button>
+              )}
+
+              <div className="exam-list">
+                {exams.map((exam, index) => {
+                  const needsMax =
+                    exam.examType === "GAOKAO" ||
+                    exam.examType === "ZHONGKAO" ||
+                    exam.examType === "OTHER";
+                  return (
+                    <div className="exam-row" key={exam.id}>
+                      <span className="exam-number">{String(index + 1).padStart(2, "0")}</span>
+                      <label className="compact-field exam-type">
+                        <span>考试</span>
+                        <select
+                          value={exam.examType}
+                          onChange={(event) =>
+                            updateExam(exam.id, "examType", event.target.value)
+                          }
+                        >
+                          {EXAM_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="compact-field">
+                        <span>总分</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          placeholder="如 510"
+                          value={exam.overallScore}
+                          onChange={(event) =>
+                            updateExam(exam.id, "overallScore", event.target.value)
+                          }
+                        />
+                      </label>
+                      <label className="compact-field">
+                        <span>阅读分（可选）</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          placeholder="如 188"
+                          value={exam.readingScore}
+                          onChange={(event) =>
+                            updateExam(exam.id, "readingScore", event.target.value)
+                          }
+                        />
+                      </label>
+                      {needsMax && (
+                        <label className="compact-field">
+                          <span>满分</span>
+                          <input
+                            type="number"
+                            placeholder="如 150"
+                            value={exam.maxScore}
+                            onChange={(event) =>
+                              updateExam(exam.id, "maxScore", event.target.value)
+                            }
+                          />
+                        </label>
+                      )}
+                      {exam.examType === "TOEFL" && (
+                        <label className="compact-field">
+                          <span>计分版本</span>
+                          <select
+                            value={exam.scaleVersion}
+                            onChange={(event) =>
+                              updateExam(exam.id, "scaleVersion", event.target.value)
+                            }
+                          >
+                            <option value="0_120">0–120</option>
+                            <option value="1_6">1–6</option>
+                          </select>
+                        </label>
+                      )}
+                      {(exam.examType === "GAOKAO" ||
+                        exam.examType === "ZHONGKAO") && (
+                        <label className="compact-field">
+                          <span>考区 / 省份</span>
+                          <input
+                            type="text"
+                            placeholder="如 上海"
+                            value={exam.region}
+                            onChange={(event) =>
+                              updateExam(exam.id, "region", event.target.value)
+                            }
+                          />
+                        </label>
+                      )}
+                      <label className="compact-field year">
+                        <span>年份</span>
+                        <input
+                          type="number"
+                          placeholder="2026"
+                          value={exam.year}
+                          onChange={(event) =>
+                            updateExam(exam.id, "year", event.target.value)
+                          }
+                        />
+                      </label>
+                      <button
+                        className="remove-button"
+                        type="button"
+                        aria-label={`删除第 ${index + 1} 条成绩`}
+                        onClick={() =>
+                          setExams((current) =>
+                            current.filter((item) => item.id !== exam.id),
+                          )
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
+            </div>
 
-              <div className="field-grid two">
-                <label className="field-group">
-                  <span className="field-label">当前学习/工作阶段</span>
-                  <select
-                    className="select-input"
-                    value={educationStage}
-                    onChange={(event) => setEducationStage(event.target.value)}
-                  >
-                    <option value="middle_school">初中阶段</option>
-                    <option value="high_school">高中阶段</option>
-                    <option value="university">大学阶段</option>
-                    <option value="graduated">职场 / 已毕业</option>
-                    <option value="other">其他阶段</option>
-                  </select>
-                </label>
+            <div className="form-footer">
+              <p>
+                <span>ⓘ</span>
+                MVP 使用固定本地规则选择起始测试，不接入 AI，也不构成正式 CEFR 认证。
+              </p>
+              <button className="primary-button" type="submit">
+                开始定位
+                <span>→</span>
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
 
-                <label className="field-group">
-                  <span className="field-label">主要阅读目标</span>
-                  <select
-                    className="select-input"
-                    value={goal}
-                    onChange={(event) => setGoal(event.target.value)}
-                  >
-                    <option value="originals">阅读英文原著 / 刊物</option>
-                    <option value="exam">备考各类英语考试</option>
-                    <option value="knowledge">获取专业/前沿知识</option>
-                    <option value="daily">日常兴趣与综合提升</option>
-                  </select>
-                </label>
+      {stage === "routing" && (
+        <section className="state-card routing-card" aria-live="polite">
+          <div className="orbit">
+            <span />
+            <span />
+            <strong>R</strong>
+          </div>
+          <p className="kicker">Rule-based placement</p>
+          <h1>正在整合你的阅读信号</h1>
+          <p>本地规则正在合并考试量尺、成绩时间、阅读自评与学习阶段。</p>
+          <div className="analysis-lines">
+            <span />
+            <span />
+            <span />
+          </div>
+        </section>
+      )}
+
+      {stage === "reading" && activeTest && inference && (
+        <section className="reading-layout">
+          <aside className="reading-sidebar">
+            <div>
+              <p className="section-index">STEP 02 · READING</p>
+              <div className="band-pill">
+                {activeTest.band} · {activeTest.version} 卷
               </div>
+              <h1>{activeTest.title}</h1>
+              <p>{activeTest.dek}</p>
+            </div>
+            <dl className="reading-meta">
+              <div>
+                <dt>篇幅</dt>
+                <dd>{totalWords} words</dd>
+              </div>
+              <div>
+                <dt>预计</dt>
+                <dd>{activeTest.readTime}</dd>
+              </div>
+              <div>
+                <dt>阅读计时</dt>
+                <dd className="timer">{formatTime(readingElapsed)}</dd>
+              </div>
+            </dl>
+            <div className="click-hint">
+              <span>?</span>
+              <p>
+                遇到不确定的词就点击。
+                <br />
+                查词不会扣分。
+              </p>
+            </div>
+          </aside>
 
-              <fieldset className="self-level-section">
-                <legend className="field-label">你目前的英文阅读体验更接近哪种状态？</legend>
-                <div className="choice-cards">
-                  {[
-                    ["difficult", "基础起步", "读简单英文也比较吃力，依赖查词翻译"],
-                    ["general", "进阶提升", "能顺畅阅读一般文章，遇到长难句会卡住"],
-                    ["experienced", "熟练阅读", "有持续阅读原著经验，能流畅处理复杂文本"],
-                  ].map(([value, title, description]) => (
+          <article className="article-card">
+            <div className="article-topline">
+              <span>READING PASSAGE</span>
+              <span>
+                {activeTest.band} · PACK {activeTest.version} · NON-FICTION
+              </span>
+            </div>
+            <div className="article-body" onClick={() => setSelectedWord(null)}>
+              {activeTest.paragraphs.map((paragraph, paragraphIndex) => (
+                <p key={paragraphIndex}>
+                  {splitWords(paragraph).map((token, tokenIndex) => {
+                    const isWord = /^\p{L}/u.test(token);
+                    const tokenId = `${paragraphIndex}-${tokenIndex}`;
+                    return isWord ? (
+                      <button
+                        type="button"
+                        className={`word-token ${clickedTokens[tokenId] ? "looked-up" : ""} ${
+                          selectedWord?.tokenId === tokenId ? "active" : ""
+                        }`}
+                        key={tokenId}
+                        aria-expanded={selectedWord?.tokenId === tokenId}
+                        onClick={(event) => clickWord(token, tokenId, event)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setSelectedWord(null);
+                        }}
+                      >
+                        {token}
+                        {selectedWord?.tokenId === tokenId && (
+                          <span
+                            className={`word-popover align-${selectedWord.alignment}`}
+                            role="tooltip"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <span className="word-popover-label">
+                              {selectedWord.dictionaryEntry ? "本地词典" : "语境释义"}
+                            </span>
+                            {selectedWord.status === "loading" ? (
+                              <span className="word-popover-status" role="status">
+                                正在查询词典…
+                              </span>
+                            ) : selectedWord.dictionaryEntry ? (
+                              <>
+                                <strong>{selectedWord.dictionaryEntry.lemma || selectedWord.word}</strong>
+                                <span className="word-popover-meta">
+                                  {[
+                                    selectedWord.dictionaryEntry.phonetic,
+                                    selectedWord.dictionaryEntry.partOfSpeech,
+                                    selectedWord.dictionaryEntry.cefrLevel,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </span>
+                                {getDictionaryChineseMeaning(selectedWord.dictionaryEntry) && (
+                                  <span className="word-popover-meaning">
+                                    {getDictionaryChineseMeaning(selectedWord.dictionaryEntry)}
+                                  </span>
+                                )}
+                                {getDictionaryEnglishDefinition(selectedWord.dictionaryEntry) && (
+                                  <span className="word-popover-english">
+                                    {getDictionaryEnglishDefinition(selectedWord.dictionaryEntry)}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                <strong>{selectedWord.word}</strong>
+                                <span className="word-popover-meaning">
+                                  {selectedWord.definition}
+                                </span>
+                                {selectedWord.status === "error" && (
+                                  <span className="word-popover-status">
+                                    词典暂时不可用，已显示测评词表释义。
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    ) : (
+                      <span key={tokenId}>{token}</span>
+                    );
+                  })}
+                </p>
+              ))}
+            </div>
+
+            <div className="article-footer">
+              <p>
+                已查 <strong>{Object.keys(clickedTokens).length}</strong> 个词位
+              </p>
+              <button
+                className="primary-button"
+                onClick={() => moveBetweenReadingAndQuestions("questions")}
+              >
+                {answeredCount > 0
+                  ? `继续答题（已完成 ${answeredCount}/6）`
+                  : "我读完了，开始答题"}
+                <span>→</span>
+              </button>
+            </div>
+          </article>
+        </section>
+      )}
+
+      {stage === "questions" && activeTest && (
+        <section className="questions-layout">
+          <aside className="questions-intro">
+            <p className="section-index">STEP 02 · CHECK</p>
+            <div className="band-pill">
+              {activeTest.band} · {activeTest.version} 卷
+            </div>
+            <h1>不是考语法，<br />而是确认你读懂了什么。</h1>
+            <p>共 6 道单选题，覆盖语境词汇、句子理解和语篇理解三个层次。</p>
+            <div className="answer-progress">
+              <span style={{ width: `${(answeredCount / 6) * 100}%` }} />
+            </div>
+            <small>{answeredCount} / 6 已完成</small>
+            <div className="question-timer">
+              <span>答题计时</span>
+              <strong>{formatTime(questionElapsed)}</strong>
+              <small>暂不参与等级判断</small>
+            </div>
+            <div className="question-reading-link">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => moveBetweenReadingAndQuestions("reading")}
+              >
+                <span aria-hidden="true">←</span>
+                返回原文
+              </button>
+              <p>查看文章不会清空已经选择的答案。</p>
+            </div>
+          </aside>
+
+          <div className="question-list">
+            {activeTest.questions.map((question, questionIndex) => (
+              <fieldset className="question-card" key={question.id}>
+                <legend>
+                  <span>{String(questionIndex + 1).padStart(2, "0")}</span>
+                  <small>{question.eyebrow}</small>
+                  <strong>{question.prompt}</strong>
+                </legend>
+                <div className="option-grid">
+                  {question.options.map((option, optionIndex) => (
                     <label
-                      key={value}
-                      className={`choice-card ${selfLevel === value ? "selected" : ""}`}
+                      className={`option ${
+                        answers[question.id] === optionIndex ? "selected" : ""
+                      }`}
+                      key={option}
                     >
                       <input
                         type="radio"
-                        name="selfLevel"
-                        value={value}
-                        checked={selfLevel === value}
-                        onChange={(event) => setSelfLevel(event.target.value)}
+                        name={question.id}
+                        checked={answers[question.id] === optionIndex}
+                        onChange={() =>
+                          setAnswers((current) => ({
+                            ...current,
+                            [question.id]: optionIndex,
+                          }))
+                        }
                       />
-                      <span className="radio-dot" />
-                      <div className="choice-info">
-                        <strong>{title}</strong>
-                        <small>{description}</small>
-                      </div>
+                      <span>{String.fromCharCode(65 + optionIndex)}</span>
+                      <p>{option}</p>
                     </label>
                   ))}
                 </div>
               </fieldset>
+            ))}
 
-              <div className="exam-section">
-                <div className="exam-header">
-                  <div>
-                    <h3>已有英语考试成绩（可选）</h3>
-                    <p>填入已有成绩可提高初始匹配精度；没有可直接跳过。</p>
-                  </div>
-                  <button
-                    className="add-exam-btn"
-                    type="button"
-                    onClick={() => setExams((current) => [...current, createExam()])}
-                  >
-                    ＋ 添加成绩
-                  </button>
-                </div>
-
-                {exams.length === 0 && (
-                  <button
-                    className="empty-exams-placeholder"
-                    type="button"
-                    onClick={() => setExams([createExam()])}
-                  >
-                    <span>＋</span>
-                    点击添加一条考试成绩（如高考、四六级、雅思、托福）
-                  </button>
-                )}
-
-                <div className="exam-list">
-                  {exams.map((exam, index) => {
-                    const needsMax =
-                      exam.examType === "GAOKAO" ||
-                      exam.examType === "ZHONGKAO" ||
-                      exam.examType === "OTHER";
-                    return (
-                      <div className="exam-row-card" key={exam.id}>
-                        <div className="exam-row-top">
-                          <span className="exam-index">成绩 #{index + 1}</span>
-                          <button
-                            className="remove-exam-btn"
-                            type="button"
-                            aria-label={`删除第 ${index + 1} 条成绩`}
-                            onClick={() =>
-                              setExams((current) =>
-                                current.filter((item) => item.id !== exam.id),
-                              )
-                            }
-                          >
-                            ✕ 删除
-                          </button>
-                        </div>
-
-                        <div className="exam-fields-grid">
-                          <label className="compact-field">
-                            <span>考试类别</span>
-                            <select
-                              value={exam.examType}
-                              onChange={(event) =>
-                                updateExam(exam.id, "examType", event.target.value)
-                              }
-                            >
-                              {EXAM_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-
-                          <label className="compact-field">
-                            <span>获得总分</span>
-                            <input
-                              type="number"
-                              step="0.5"
-                              placeholder="如 510"
-                              value={exam.overallScore}
-                              onChange={(event) =>
-                                updateExam(exam.id, "overallScore", event.target.value)
-                              }
-                            />
-                          </label>
-
-                          <label className="compact-field">
-                            <span>阅读单项分（选填）</span>
-                            <input
-                              type="number"
-                              step="0.5"
-                              placeholder="如 188"
-                              value={exam.readingScore}
-                              onChange={(event) =>
-                                updateExam(exam.id, "readingScore", event.target.value)
-                              }
-                            />
-                          </label>
-
-                          {needsMax && (
-                            <label className="compact-field">
-                              <span>该考试满分</span>
-                              <input
-                                type="number"
-                                placeholder="如 150"
-                                value={exam.maxScore}
-                                onChange={(event) =>
-                                  updateExam(exam.id, "maxScore", event.target.value)
-                                }
-                              />
-                            </label>
-                          )}
-
-                          {exam.examType === "TOEFL" && (
-                            <label className="compact-field">
-                              <span>计分版本</span>
-                              <select
-                                value={exam.scaleVersion}
-                                onChange={(event) =>
-                                  updateExam(exam.id, "scaleVersion", event.target.value)
-                                }
-                              >
-                                <option value="0_120">0–120 分</option>
-                                <option value="1_6">1–6 分</option>
-                              </select>
-                            </label>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+            <div className="submit-panel">
+              <div>
+                <strong>{answeredAll ? "可以提交了" : "请完成全部题目"}</strong>
+                <p>提交后将生成阅读画像与推荐档位。</p>
               </div>
-
-              <div className="form-footer">
-                <p className="footer-notice">
-                  <span>ⓘ</span>
-                  系统将依据 CEFR 标准与自评结果为您生成实测语篇。
-                </p>
-                <button className="primary-action-button" type="submit">
-                  进入阅读实测
-                  <span className="arrow">→</span>
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        {stage === "routing" && (
-          <section className="state-card routing-card" aria-live="polite">
-            <div className="loading-spinner">
-              <div className="spinner-ring" />
-              <strong className="spinner-symbol">CEFR</strong>
-            </div>
-            <span className="routing-tag">AI LEVEL ROUTING</span>
-            <h2>正在为你生成测评套题...</h2>
-            <p>结合自评等级与考试记录，精准匹配符合您阅读能力的实测语篇。</p>
-          </section>
-        )}
-
-        {stage === "reading" && activeTest && inference && (
-          <section className="reading-layout">
-            <div className="reading-toolbar">
-              <div className="toolbar-info">
-                <span className="band-badge">CEFR {activeTest.band}</span>
-                <span className="pack-version">{activeTest.version} 卷</span>
-                <span className="meta-divider">·</span>
-                <span className="meta-text">{totalWords} 词</span>
-                <span className="meta-divider">·</span>
-                <span className="meta-text">预计 {activeTest.readTime}</span>
-              </div>
-
-              <div className="toolbar-timer">
-                <span>⏱ 阅读计时：</span>
-                <strong>{formatTime(readingElapsed)}</strong>
-              </div>
-
               <button
-                className="start-questions-button"
-                onClick={() => moveBetweenReadingAndQuestions("questions")}
+                className="primary-button"
+                disabled={!answeredAll}
+                onClick={() => setStage("result")}
               >
-                {answeredCount > 0
-                  ? `继续答题 (${answeredCount}/6)`
-                  : "读完了，开始答题 →"}
+                查看结果
+                <span>→</span>
               </button>
             </div>
+          </div>
+        </section>
+      )}
 
-            <article className="reading-article-card">
-              <header className="article-header">
-                <span className="passage-type">PASSAGE ASSESSMENT · NON-FICTION</span>
-                <h1 className="article-title">{activeTest.title}</h1>
-                <p className="article-dek">{activeTest.dek}</p>
-                <div className="lookup-hint-bar">
-                  <span className="hint-icon">💡</span>
-                  <span>提示：遭遇生词可随时点击查阅释义，查词不扣分。已查阅 <strong>{Object.keys(clickedTokens).length}</strong> 个词位。</span>
-                </div>
-              </header>
-
-              <div className="article-body" onClick={() => setSelectedWord(null)}>
-                {activeTest.paragraphs.map((paragraph, paragraphIndex) => (
-                  <p key={paragraphIndex}>
-                    {splitWords(paragraph).map((token, tokenIndex) => {
-                      const isWord = /^\p{L}/u.test(token);
-                      const tokenId = `${paragraphIndex}-${tokenIndex}`;
-                      return isWord ? (
-                        <button
-                          type="button"
-                          className={`word-token ${clickedTokens[tokenId] ? "looked-up" : ""} ${
-                            selectedWord?.tokenId === tokenId ? "active" : ""
-                          }`}
-                          key={tokenId}
-                          aria-expanded={selectedWord?.tokenId === tokenId}
-                          onClick={(event) => clickWord(token, tokenId, event)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") setSelectedWord(null);
-                          }}
-                        >
-                          {token}
-                          {selectedWord?.tokenId === tokenId && (
-                            <span
-                              className={`word-popover align-${selectedWord.alignment}`}
-                              role="tooltip"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <span className="word-popover-label">
-                                {selectedWord.dictionaryEntry ? "本地词典释义" : "语境释义"}
-                              </span>
-                              {selectedWord.status === "loading" ? (
-                                <span className="word-popover-status" role="status">
-                                  正在查询词典…
-                                </span>
-                              ) : selectedWord.dictionaryEntry ? (
-                                <>
-                                  <strong className="popover-word">
-                                    {selectedWord.dictionaryEntry.lemma || selectedWord.word}
-                                  </strong>
-                                  <span className="word-popover-meta">
-                                    {[
-                                      selectedWord.dictionaryEntry.phonetic,
-                                      selectedWord.dictionaryEntry.partOfSpeech,
-                                      selectedWord.dictionaryEntry.cefrLevel,
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")}
-                                  </span>
-                                  {getDictionaryChineseMeaning(selectedWord.dictionaryEntry) && (
-                                    <span className="word-popover-meaning">
-                                      {getDictionaryChineseMeaning(selectedWord.dictionaryEntry)}
-                                    </span>
-                                  )}
-                                  {getDictionaryEnglishDefinition(selectedWord.dictionaryEntry) && (
-                                    <span className="word-popover-english">
-                                      {getDictionaryEnglishDefinition(selectedWord.dictionaryEntry)}
-                                    </span>
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  <strong className="popover-word">{selectedWord.word}</strong>
-                                  <span className="word-popover-meaning">
-                                    {selectedWord.definition}
-                                  </span>
-                                  {selectedWord.status === "error" && (
-                                    <span className="word-popover-status">
-                                      词典暂时不可用，已显示测评词表释义。
-                                    </span>
-                                  )}
-                                </>
-                              )}
-                            </span>
-                          )}
-                        </button>
-                      ) : (
-                        <span key={tokenId}>{token}</span>
-                      );
-                    })}
-                  </p>
-                ))}
-              </div>
-
-              <footer className="article-footer">
-                <div className="footer-left">
-                  <span>已累计阅读用时 <strong>{formatTime(readingElapsed)}</strong></span>
-                </div>
-                <button
-                  className="primary-action-button"
-                  onClick={() => moveBetweenReadingAndQuestions("questions")}
-                >
-                  {answeredCount > 0
-                    ? `继续答题 (${answeredCount}/6)`
-                    : "我已读完，进入答题 →"}
-                </button>
-              </footer>
-            </article>
-          </section>
-        )}
-
-        {stage === "questions" && activeTest && (
-          <section className="questions-layout">
-            <div className="questions-header-card">
-              <div className="questions-header-top">
-                <div>
-                  <span className="band-badge">CEFR {activeTest.band}</span>
-                  <h2>理解度测试（共 6 题）</h2>
-                </div>
-                <button
-                  type="button"
-                  className="back-to-reading-btn"
-                  onClick={() => moveBetweenReadingAndQuestions("reading")}
-                >
-                  ← 查看原文
-                </button>
-              </div>
-
-              <div className="progress-bar-container">
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: `${(answeredCount / 6) * 100}%` }}
-                />
-              </div>
-
-              <div className="questions-meta-row">
-                <span>答题进度：<strong>{answeredCount} / 6</strong></span>
-                <span>⏱ 答题用时：<strong>{formatTime(questionElapsed)}</strong></span>
-              </div>
-            </div>
-
-            <div className="question-list">
-              {activeTest.questions.map((question, questionIndex) => (
-                <fieldset className="question-card" key={question.id}>
-                  <legend className="question-card-header">
-                    <span className="q-num">Q{questionIndex + 1}</span>
-                    <span className="q-eyebrow">{question.eyebrow}</span>
-                    <h3 className="q-prompt">{question.prompt}</h3>
-                  </legend>
-                  <div className="option-grid">
-                    {question.options.map((option, optionIndex) => (
-                      <label
-                        className={`option-tile ${
-                          answers[question.id] === optionIndex ? "selected" : ""
-                        }`}
-                        key={option}
-                      >
-                        <input
-                          type="radio"
-                          name={question.id}
-                          checked={answers[question.id] === optionIndex}
-                          onChange={() =>
-                            setAnswers((current) => ({
-                              ...current,
-                              [question.id]: optionIndex,
-                            }))
-                          }
-                        />
-                        <span className="option-letter">
-                          {String.fromCharCode(65 + optionIndex)}
-                        </span>
-                        <span className="option-text">{option}</span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ))}
-
-              <div className="questions-submit-bar">
-                <div className="submit-status-text">
-                  {answeredAll ? (
-                    <span className="status-ready">✓ 全部题目已完成，可提交查看报告</span>
-                  ) : (
-                    <span className="status-pending">还有 {6 - answeredCount} 道题未回答</span>
-                  )}
-                </div>
-                <button
-                  className="primary-action-button"
-                  disabled={!answeredAll}
-                  onClick={() => setStage("result")}
-                >
-                  提交测评，生成诊断报告 →
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {stage === "result" && activeTest && inference && result && (
-          <section className="result-layout">
-            <div className="result-hero-card">
-              <div className="hero-left">
-                <span className="hero-tag">CEFR ASSESSMENT REPORT</span>
-                <h1>
-                  你的推荐阅读起点：<span className="highlight-band">{result.recommended}</span>
-                </h1>
-                <p className="hero-summary">
-                  初始背景匹配定位为 <strong>{inference.band}</strong>；综合阅读速度、生词依赖度与理解正确率，建议您从{' '}
-                  <strong>{result.recommended}</strong> 级别的通俗原著与刊物切入阅读。
-                </p>
-              </div>
-
-              <div className="level-badge-card">
-                <span className="badge-label">推荐 CEFR 级别</span>
-                <div className="badge-value">{result.recommended}</div>
-                <div className="level-shift-tag">
-                  {result.adjustment === "up"
-                    ? "▲ 比初始预设提高一级"
-                    : result.adjustment === "down"
-                      ? "▼ 比初始预设调整降低一级"
-                      : "▶ 与初始评估精准吻合"}
-                </div>
-              </div>
-            </div>
-
-            <div className="section-title">
-              <h3>理解能力维度表现</h3>
-            </div>
-
-            <div className="metrics-grid">
-              {[
-                [
-                  "语境词汇",
-                  result.grouped.vocabulary.correct,
-                  result.grouped.vocabulary.total,
-                  "Vocabulary",
-                ],
-                [
-                  "句子理解",
-                  result.grouped.sentence.correct,
-                  result.grouped.sentence.total,
-                  "Sentence",
-                ],
-                [
-                  "语篇理解",
-                  result.grouped.discourse.correct,
-                  result.grouped.discourse.total,
-                  "Discourse",
-                ],
-              ].map(([label, correct, total, english]) => {
-                const percent = Math.round((Number(correct) / Number(total)) * 100);
-                return (
-                  <article className="metric-card" key={String(label)}>
-                    <div className="metric-card-header">
-                      <span className="metric-en">{english}</span>
-                      <strong className="metric-zh">{label}</strong>
-                    </div>
-                    <div className="metric-score-row">
-                      <span className="score-percent">{percent}%</span>
-                      <span className="score-fraction">
-                        {correct} / {total} 正确
-                      </span>
-                    </div>
-                    <div className="metric-bar-bg">
-                      <div className="metric-bar-fill" style={{ width: `${percent}%` }} />
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-
-            <div className="result-details-grid">
-              <article className="detail-card">
-                <div className="card-header">
-                  <span className="card-tag">BEHAVIOR SIGNALS</span>
-                  <h2>阅读行为数据</h2>
-                </div>
-                <div className="stats-list">
-                  <div className="stat-item">
-                    <span className="stat-label">查词词位数</span>
-                    <strong className="stat-value">{result.uniqueClicks} <small>个</small></strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-label">每 100 词查词频率</span>
-                    <strong className="stat-value">{result.lookupFrequency.toFixed(1)} <small>次</small></strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-label">估算阅读速度</span>
-                    <strong className="stat-value">
-                      {result.wpmValid ? `${result.wpm} WPM` : "理解率偏低暂未计速"}
-                    </strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-label">阅读 / 答题用时</span>
-                    <strong className="stat-value">
-                      {formatTime(readingElapsed)} / {formatTime(questionElapsed)}
-                    </strong>
-                  </div>
-                </div>
-              </article>
-
-              <article className="detail-card">
-                <div className="card-header">
-                  <span className="card-tag">RECOMMENDATION PARAMETERS</span>
-                  <h2>推荐阅读参数</h2>
-                </div>
-                <ul className="params-list">
-                  <li>
-                    <span className="param-label">最佳阅读难度</span>
-                    <strong className="param-value">{result.recommended} 通俗非虚构 / 刊物</strong>
-                  </li>
-                  <li>
-                    <span className="param-label">推荐单篇长度</span>
-                    <strong className="param-value">
-                      {result.recommended === "C2"
-                        ? "450–700"
-                        : result.recommended === "C1"
-                          ? "350–550"
-                          : result.recommended === "B2"
-                            ? "250–400"
-                            : result.recommended === "B1"
-                              ? "180–300"
-                              : result.recommended === "A2"
-                                ? "100–180"
-                                : "60–120"}{" "}
-                      词
-                    </strong>
-                  </li>
-                  <li>
-                    <span className="param-label">阅读辅助策略</span>
-                    <strong className="param-value">开启点词即查 & CEFR 分级改写</strong>
-                  </li>
-                </ul>
-              </article>
-            </div>
-
-            <div className="result-actions-bar">
-              <p className="actions-hint">
-                测评结果已同步保存至应用。系统将优先选用 <strong>{result.recommended}</strong> 为您算法推荐文库文章与智能改写。
+      {stage === "result" && activeTest && inference && result && (
+        <section className="result-layout">
+          <div className="result-hero">
+            <div>
+              <p className="kicker">Your reading edge</p>
+              <h1>
+                你的下一篇，
+                <br />
+                从 <span>{result.recommended}</span> 开始。
+              </h1>
+              <p className="large-copy">
+                问卷将你粗定位为 {inference.band}；阅读实测后建议
+                {result.adjustment === "up"
+                  ? "提高一级"
+                  : result.adjustment === "down"
+                    ? "降低一级"
+                    : "保持当前档位"}
+                。
               </p>
-              <div className="buttons-group">
-                {onStartRecommendedReading && (
-                  <button
-                    className="primary-action-button"
-                    type="button"
-                    onClick={() => onStartRecommendedReading(result.recommended)}
-                  >
-                    按 {result.recommended} 开始推荐阅读 →
-                  </button>
-                )}
-                {attempt === 1 && result.adjustment === "same" && (
-                  <button className="secondary-action-button" onClick={startValidationPack}>
-                    抽取同级新卷复核 →
-                  </button>
-                )}
-                <button className="secondary-action-button" onClick={restart}>
-                  重新测试 ↻
-                </button>
-                <button className="secondary-action-button" type="button" onClick={onBack}>
-                  返回主页
-                </button>
+            </div>
+            <div className="level-shift" aria-label="档位变化">
+              <div>
+                <small>粗定位</small>
+                <strong>{inference.band}</strong>
+              </div>
+              <span>→</span>
+              <div className="recommended">
+                <small>推荐阅读</small>
+                <strong>{result.recommended}</strong>
               </div>
             </div>
-          </section>
-        )}
-      </main>
+          </div>
+
+          <div className="metrics-grid">
+            {[
+              [
+                "语境词汇",
+                result.grouped.vocabulary.correct,
+                result.grouped.vocabulary.total,
+                "Vocabulary",
+              ],
+              [
+                "句子理解",
+                result.grouped.sentence.correct,
+                result.grouped.sentence.total,
+                "Sentence",
+              ],
+              [
+                "语篇理解",
+                result.grouped.discourse.correct,
+                result.grouped.discourse.total,
+                "Discourse",
+              ],
+            ].map(([label, correct, total, english]) => {
+              const percent = (Number(correct) / Number(total)) * 100;
+              return (
+                <article className="metric-card" key={String(label)}>
+                  <div className="metric-label">
+                    <span>{english}</span>
+                    <strong>{label}</strong>
+                  </div>
+                  <div className="metric-score">
+                    <strong>{percent}%</strong>
+                    <span>
+                      {correct} / {total}
+                    </span>
+                  </div>
+                  <div className="metric-bar">
+                    <span style={{ width: `${percent}%` }} />
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="result-bottom">
+            <article className="behavior-card">
+              <div className="card-heading">
+                <div>
+                  <span>BEHAVIOR SIGNALS</span>
+                  <h2>阅读行为</h2>
+                </div>
+                <span className="subtle-badge">仅作辅助</span>
+              </div>
+              <div className="behavior-stats">
+                <div>
+                  <small>查词词位</small>
+                  <strong>{result.uniqueClicks}</strong>
+                  <span>个</span>
+                </div>
+                <div>
+                  <small>每 100 词查词</small>
+                  <strong>{result.lookupFrequency.toFixed(1)}</strong>
+                  <span>次</span>
+                </div>
+                <div>
+                  <small>阅读速度</small>
+                  <strong>{result.wpmValid ? result.wpm : "—"}</strong>
+                  <span>{result.wpmValid ? "WPM" : "理解率不足"}</span>
+                </div>
+              </div>
+              <div className="time-summary">
+                <div>
+                  <small>阅读用时</small>
+                  <strong>{formatTime(readingElapsed)}</strong>
+                </div>
+                <div>
+                  <small>答题用时</small>
+                  <strong>{formatTime(questionElapsed)}</strong>
+                  <span>仅记录，暂不参与等级判断</span>
+                </div>
+              </div>
+            </article>
+
+            <article className="recommendation-card">
+              <div className="card-heading">
+                <div>
+                  <span>NEXT READING</span>
+                  <h2>推荐参数</h2>
+                </div>
+              </div>
+              <ul>
+                <li>
+                  <span>难度</span>
+                  <strong>{result.recommended} 通俗非虚构</strong>
+                </li>
+                <li>
+                  <span>建议篇幅</span>
+                  <strong>
+                    {result.recommended === "C2"
+                      ? "450–700"
+                      : result.recommended === "C1"
+                        ? "350–550"
+                        : result.recommended === "B2"
+                          ? "250–400"
+                          : result.recommended === "B1"
+                            ? "180–300"
+                            : result.recommended === "A2"
+                              ? "100–180"
+                              : "60–120"}{" "}
+                    词
+                  </strong>
+                </li>
+                <li>
+                  <span>阅读辅助</span>
+                  <strong>保留点词语境释义</strong>
+                </li>
+              </ul>
+            </article>
+          </div>
+
+          <div className="result-actions">
+            <p>
+              这是文章推荐用的阅读起始档位，不是正式 CEFR 认证结果。
+              结果已写入应用：推荐、文库筛选与改写会优先使用{' '}
+              <strong>{result.recommended}</strong>。
+            </p>
+            <div className="result-action-buttons">
+              {onStartRecommendedReading && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => onStartRecommendedReading(result.recommended)}
+                >
+                  按 {result.recommended} 开始推荐阅读
+                  <span>→</span>
+                </button>
+              )}
+              {attempt === 1 && result.adjustment === "same" && (
+                <button className="secondary-button" onClick={startValidationPack}>
+                  抽取同级新卷复核
+                  <span>→</span>
+                </button>
+              )}
+              <button className="secondary-button" onClick={restart}>
+                重新测试
+                <span>↻</span>
+              </button>
+              <button className="secondary-button" type="button" onClick={onBack}>
+                返回首页
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+    </main>
     </div>
   );
 };
