@@ -43,6 +43,7 @@ import {
   type RecommendationSource,
 } from './lib/resolveRecommendation';
 import { startRecSession } from './lib/recommendationTelemetry';
+import { getRecommendationEntryAction } from './lib/recommendationEntry';
 import type { RecommendedArticleCandidate } from './lib/articleValidation';
 import {
   buildRecommendationArticlePool,
@@ -1016,7 +1017,7 @@ export default function App() {
 
   const startRecommendationFromEntry = () => {
     if (isRecommending) return;
-    if (!assessmentResult) {
+    if (getRecommendationEntryAction(Boolean(assessmentResult)) === 'assessment') {
       navigate({ kind: 'assessment' }, { replace: true });
       return;
     }
@@ -1225,7 +1226,7 @@ export default function App() {
             title={label}
             onClick={() => {
               if (id === 'recommendation') {
-                goToRecommendation();
+                startRecommendationFromEntry();
                 return;
               }
               if (id === 'reading') {

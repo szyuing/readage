@@ -1002,10 +1002,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   setShowMenu(false);
                   handleSpeakText(article.content.join(' '));
                 }}
-                className="w-full text-left min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-2"
+                className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center"
+                title="Listen to full article"
+                aria-label="Listen to full article"
               >
                 <Volume2 className="w-4 h-4 text-[#C35E37] shrink-0" />
-                <span>Listen to Full Article</span>
               </button>
 
               {article.paragraphTranslations && article.paragraphTranslations.length > 0 && (
@@ -1015,10 +1016,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     setShowParagraphTranslations((v) => !v);
                     setShowMenu(false);
                   }}
-                  className="w-full text-left min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-2"
+                  className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center [&>span]:hidden"
+                  title={showParagraphTranslations ? 'Hide paragraph translations' : 'Show paragraph translations'}
+                  aria-label={showParagraphTranslations ? 'Hide paragraph translations' : 'Show paragraph translations'}
                 >
                   <Globe className="w-4 h-4 text-[#2563EB] shrink-0" />
-                  <span>{showParagraphTranslations ? '隐藏段落实译' : '显示段落实译'}</span>
                 </button>
               )}
 
