@@ -60,7 +60,6 @@ import {
 import { buildIntentionalLevelRating } from './lib/articleLevel';
 import { RecommendationEntryScreen } from './components/RecommendationEntryScreen';
 import { LandingPage } from './components/LandingPage';
-import { ReadAgeLogo } from './components/ReadAgeBrand';
 import { ReadingScreen } from './components/ReadingScreen';
 import { MyLearningScreen } from './components/MyLearningScreen';
 import { HistoryScreen } from './components/HistoryScreen';
@@ -221,6 +220,8 @@ export default function App() {
   const completedArticleIdsRef = useRef(
     new Set(history.filter((article) => article.status === 'Completed').map((article) => article.id))
   );
+  /** Last article opened in the reading tab — survives nav switches away from /read/:id. */
+  const [lastReadingArticleId, setLastReadingArticleId] = useState<string | null>(null);
   const [showEnterArticle, setShowEnterArticle] = useState(false);
   const importQueueSnapshot = useArticleImportQueue();
 
@@ -560,13 +561,26 @@ export default function App() {
   };
 
   const routedArticleId = route.kind === 'reading' ? route.articleId : '';
+  const findArticleById = (articleId: string): Article | null => {
+    if (!articleId) return null;
+    return history.find((article) => article.id === articleId)
+      || recommendationArticlesRef.current.find((article) => article.id === articleId)
+      || recommendationLibrary.find((article) => article.id === articleId)
+      || builtInLibrary.find((article) => article.id === articleId)
+      || null;
+  };
   const activeArticle = useMemo(
     () => history.find((article) => article.id === routedArticleId)
+      || recommendationArticles.find((article) => article.id === routedArticleId)
       || recommendationLibrary.find((article) => article.id === routedArticleId)
       || builtInLibrary.find((article) => article.id === routedArticleId)
       || null,
-    [routedArticleId, history, recommendationLibrary, builtInLibrary]
+    [routedArticleId, history, recommendationArticles, recommendationLibrary, builtInLibrary]
   );
+
+  useEffect(() => {
+    if (activeArticle) setLastReadingArticleId(activeArticle.id);
+  }, [activeArticle]);
 
   // Memory V2.2: 使用 Hooks 数据
   const dueLemmas = useMemo(
@@ -696,6 +710,7 @@ export default function App() {
 
     if (open) {
       if (!options?.preserveRecommendationFeed) resetRecommendationFeed();
+      setLastReadingArticleId(withMeta.id);
       touchSession(withMeta.id, (session) => ({ ...session, lastOpenedAt: openedAt }));
       navigate({ kind: 'reading', articleId: withMeta.id });
       pushEvent('article_open', { articleId: withMeta.id });
@@ -711,8 +726,51 @@ export default function App() {
     }
   };
 
+  /**
+   * Open any article as the head of a recommendation continuous-reading feed
+   * (scroll-end / left-swipe advance to the next recommended piece).
+   */
+  const beginReadingSession = (
+    article: Article,
+    options?: {
+      source?: ImportJobSource;
+      /** When true, keep the current feed (advance path). */
+      continueFeed?: boolean;
+      topic?: string;
+      reviewWords?: string[];
+    }
+  ) => {
+    const source = options?.source
+      ?? (article.source === 'magazine'
+        ? 'magazine'
+        : article.source === 'ai_generated'
+          ? 'recommend'
+          : 'history');
+
+    if (!options?.continueFeed) {
+      resetRecommendationFeed();
+      recommendationContextRef.current = {
+        topic: options?.topic ?? 'English Idioms & Daily Practice',
+        reviewWords: options?.reviewWords ?? dueLemmas.slice(0, 5),
+      };
+      updateRecommendationFeed(startRecommendationFeed(article.id));
+      updateRecommendationArticles([article]);
+    }
+
+    setLastReadingArticleId(article.id);
+    ingestArticle(article, {
+      open: true,
+      source,
+      preserveRecommendationFeed: true,
+    });
+
+    if (!options?.continueFeed && recommendationFeedRef.current.status === 'active') {
+      void prefetchNextRecommendationArticle();
+    }
+  };
+
   const openArticle = (article: Article) => {
-    ingestArticle(article, { open: true, source: 'history' });
+    beginReadingSession(article, { source: 'history' });
   };
 
   const retryImportEnrichment = (articleId: string) => {
@@ -823,6 +881,7 @@ export default function App() {
   };
 
   const openRecommendationArticle = (article: Article) => {
+    setLastReadingArticleId(article.id);
     ingestArticle(article, {
       open: true,
       source: article.source === 'ai_generated' ? 'recommend' : 'history',
@@ -1021,6 +1080,10 @@ export default function App() {
       navigate({ kind: 'assessment' }, { replace: true });
       return;
     }
+    // Keep /recommend as a loading/empty shell for cold-start recommendation.
+    if (route.kind !== 'recommendation' && route.kind !== 'reading') {
+      navigate({ kind: 'recommendation' });
+    }
     void startRecommendationReading(
       'English Idioms & Daily Practice',
       dueLemmas.slice(0, 5)
@@ -1066,6 +1129,7 @@ export default function App() {
     // Close the previous article as soon as the next one takes over. The
     // reader keeps at most the current article plus one prefetched successor.
     updateRecommendationArticles([nextArticle]);
+    setLastReadingArticleId(nextArticle.id);
     ingestArticle(nextArticle, {
       open: true,
       source: nextArticle.source === 'ai_generated' ? 'recommend' : 'history',
@@ -1077,9 +1141,9 @@ export default function App() {
   const handleAddNewCustomArticle = (newArticle: Article) => {
     setShowEnterArticle(false);
     // Manual import: store + open immediately; import module enriches in background.
-    ingestArticle(
+    beginReadingSession(
       { ...newArticle, source: newArticle.source || 'user_input' },
-      { open: true, source: 'manual' }
+      { source: 'manual' }
     );
   };
 
@@ -1147,7 +1211,7 @@ export default function App() {
       };
 
       setRewriteProgress(`已生成 ${resolvedLevel} 版本，正在入库…`);
-      ingestArticle(newArticle, { open: true, source: 'manual' });
+      beginReadingSession(newArticle, { source: 'manual' });
       pushEvent('review_start', {
         articleId: newArticle.id,
         detail: `rewrite:${targetLevel}:from:${sourceArticle.id}`,
@@ -1164,7 +1228,7 @@ export default function App() {
   const handleOpenParentArticle = (parentId: string) => {
     const parent = history.find((a) => a.id === parentId);
     if (parent) {
-      ingestArticle(parent, { open: true, source: 'history' });
+      beginReadingSession(parent, { source: 'history' });
     } else {
       window.alert('原文不在历史记录中（可能已被清除）。');
     }
@@ -1182,9 +1246,8 @@ export default function App() {
     if (!current) return [];
     return getRecommendationRenderWindow(current, recommendationFeed.queuedArticle);
   }, [activeArticle, isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
-  const goToRecommendation = () => {
-    resetRecommendationFeed();
-    navigate({ kind: 'recommendation' });
+  const goToLibrary = () => {
+    navigate({ kind: 'library' });
   };
   const goBackOrFallback = (fallback: () => void) => {
     const currentIndex = readAppHistoryIndex(window.history.state);
@@ -1194,15 +1257,39 @@ export default function App() {
     }
     fallback();
   };
-  const goBackOrRecommendation = () => goBackOrFallback(goToRecommendation);
+  const goBackOrLibrary = () => goBackOrFallback(goToLibrary);
   const goBackFromAssessment = () => goBackOrFallback(() => {
     if (!assessmentResult) {
       navigate({ kind: 'library' }, { replace: true });
       return;
     }
-    goToRecommendation();
+    goToLibrary();
   });
-  const returnHome = goBackOrRecommendation;
+  const returnHome = goBackOrLibrary;
+  const openReadingTab = () => {
+    if (route.kind === 'reading' && activeArticle) return;
+    if (isRecommending) {
+      if (route.kind !== 'recommendation') navigate({ kind: 'recommendation' });
+      return;
+    }
+    const last = lastReadingArticleId ? findArticleById(lastReadingArticleId) : null;
+    if (last) {
+      const feed = recommendationFeedRef.current;
+      if (feed.status === 'active' && feed.seenArticleIds.includes(last.id)) {
+        navigate({ kind: 'reading', articleId: last.id });
+        return;
+      }
+      beginReadingSession(last, {
+        source: last.source === 'magazine'
+          ? 'magazine'
+          : last.source === 'ai_generated'
+            ? 'recommend'
+            : 'history',
+      });
+      return;
+    }
+    startRecommendationFromEntry();
+  };
   const appNavigation = (
     <nav
       className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
@@ -1211,47 +1298,40 @@ export default function App() {
       <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
-            { id: 'recommendation' as const, label: 'Recommend', icon: null },
             { id: 'library' as const, label: 'Library', icon: Library },
-            { id: 'reading' as const, label: 'P2', icon: BookOpen },
-            { id: 'learning' as const, label: 'P3', icon: BarChart3 },
-            { id: 'history' as const, label: 'P4', icon: History },
+            { id: 'reading' as const, label: '阅读', icon: BookOpen },
+            { id: 'learning' as const, label: '学习', icon: BarChart3 },
+            { id: 'history' as const, label: '历史', icon: History },
           ] as const
-        ).map(({ id, label, icon: Icon }) => (
+        ).map(({ id, label, icon: Icon }) => {
+          const isCurrent = id === 'reading'
+            ? route.kind === 'reading' || route.kind === 'recommendation'
+            : route.kind === id;
+          return (
           <button
             key={id}
             type="button"
             aria-label={label}
-            aria-current={route.kind === id ? 'page' : undefined}
+            aria-current={isCurrent ? 'page' : undefined}
             title={label}
             onClick={() => {
-              if (id === 'recommendation') {
-                startRecommendationFromEntry();
-                return;
-              }
               if (id === 'reading') {
-                if (route.kind !== 'reading' && activeArticle) {
-                  navigate({ kind: 'reading', articleId: activeArticle.id });
-                }
+                openReadingTab();
                 return;
               }
-              resetRecommendationFeed();
               navigate({ kind: id });
             }}
             className={`tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
-              route.kind === id
+              isCurrent
                 ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
                 : 'hover:bg-[#E4DFD5] active:bg-[#E0DBCF]'
             }`}
           >
-            {Icon
-              ? <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-              : <ReadAgeLogo className="h-5 w-5 sm:h-4 sm:w-4" />}
-            {id === 'library' && (
-              <span className="hidden sm:inline">{label}</span>
-            )}
+            <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+            <span className="hidden sm:inline">{label}</span>
           </button>
-        ))}
+          );
+        })}
       </div>
     </nav>
   );
@@ -1338,7 +1418,7 @@ export default function App() {
               resetRecommendationFeed();
               navigate({ kind: 'assessment' });
             }}
-            onBack={goBackOrRecommendation}
+            onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
         )}
@@ -1368,13 +1448,12 @@ export default function App() {
             userCefrLevel={userCefrLevel}
             hasAssessment={Boolean(assessmentResult)}
             onSelectArticle={(article) =>
-              ingestArticle(article, {
-                open: true,
+              beginReadingSession(article, {
                 source: article.source === 'magazine' ? 'magazine' : 'history',
               })
             }
             onInsertArticle={() => setShowEnterArticle(true)}
-            onBack={goBackOrRecommendation}
+            onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
         )}
@@ -1395,7 +1474,7 @@ export default function App() {
                 ? () => handleOpenParentArticle(activeArticle.parentArticleId!)
                 : undefined
             }
-            onBack={goBackOrRecommendation}
+            onBack={goBackOrLibrary}
             onWordClick={handleWordClick}
             onGrammarQuery={handleGrammarQuery}
             mode={isRecommendationReading ? 'recommendation-feed' : 'single'}
@@ -1440,24 +1519,39 @@ export default function App() {
 
         {route.kind === 'reading' && !activeArticle && recommendationFeed.status !== 'ended' && (
           <div className="p-12 text-center text-[#666]">
-            <p className="mb-4">还没有打开文章，请先从首页或文库选择一篇文章。</p>
-            <button
-              onClick={returnHome}
-              className="px-4 py-2 bg-[#C35E37] text-white rounded-xl text-sm"
-            >
-              返回上一页
-            </button>
+            <p className="mb-4">
+              {isRecommending
+                ? '正在为你匹配下一篇推荐文章…'
+                : '还没有打开文章。可以从文库选一篇，或开始推荐阅读。'}
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={startRecommendationFromEntry}
+                disabled={isRecommending}
+                className="px-4 py-2 bg-[#C35E37] text-white rounded-xl text-sm disabled:opacity-60"
+              >
+                开始推荐阅读
+              </button>
+              <button
+                type="button"
+                onClick={returnHome}
+                className="px-4 py-2 border border-[#DCD5C7] bg-white text-[#5B544C] rounded-xl text-sm"
+              >
+                去文库
+              </button>
+            </div>
           </div>
         )}
 
         {route.kind === 'learning' && (
           <MyLearningScreen
-            onBack={goBackOrRecommendation}
+            onBack={goBackOrLibrary}
             navigation={appNavigation}
             onStartTargetedReview={handleStartTargetedReview}
             onOpenArticle={(id) => {
               const art = history.find((a) => a.id === id);
-              if (art) ingestArticle(art, { open: true, source: 'history' });
+              if (art) beginReadingSession(art, { source: 'history' });
             }}
             onStartEnglishTest={() => navigate({ kind: 'assessment' })}
             onStartRecommendedReading={handleRecommendForMe}
@@ -1480,9 +1574,9 @@ export default function App() {
             articles={history}
             sessions={sessions}
             onSelectArticle={(article) =>
-              ingestArticle(article, { open: true, source: 'history' })
+              beginReadingSession(article, { source: 'history' })
             }
-            onBack={goBackOrRecommendation}
+            onBack={goBackOrLibrary}
             navigation={appNavigation}
           />
         )}

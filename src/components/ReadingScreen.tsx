@@ -157,7 +157,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [showMenu, setShowMenu] = useState(false);
   const [fontSize, setFontSize] = useState<'normal' | 'large' | 'xlarge'>('normal');
   /** Show Chinese paragraph translations produced on import. */
-  const [showParagraphTranslations, setShowParagraphTranslations] = useState(true);
+  const [showParagraphTranslations, setShowParagraphTranslations] = useState(false);
   const [showLevelDetail, setShowLevelDetail] = useState(false);
 
   const contentRef = useRef<HTMLDivElement>(null);
@@ -828,8 +828,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     ) ?? article.id;
   };
 
-  const handleLeftSwipe = (startX: number, startY: number, endX: number, endY: number) => {
-    if (!isLeftSwipeGesture({ startX, startY, endX, endY })) return;
+  /** Skip to the next recommended article (left-swipe / desktop right-click). */
+  const advanceToNextRecommendedArticle = () => {
+    if (mode !== 'recommendation-feed') return;
     const articleId = getCurrentContinuousArticleId();
     if (completedContinuousArticleIdsRef.current.has(articleId)) return;
     const selection = window.getSelection();
@@ -848,6 +849,20 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         exposedLemmasByArticleRef.current.get(articleId) ?? new Set<string>(),
       )
     );
+  };
+
+  const handleLeftSwipe = (startX: number, startY: number, endX: number, endY: number) => {
+    if (!isLeftSwipeGesture({ startX, startY, endX, endY })) return;
+    advanceToNextRecommendedArticle();
+  };
+
+  /** Desktop: right-click advances to the next recommended article. */
+  const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (mode !== 'recommendation-feed' || shouldIgnoreSwipeTarget(event.target)) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    event.preventDefault();
+    advanceToNextRecommendedArticle();
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -908,6 +923,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchCancel}
+      onContextMenu={handleContextMenu}
       style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y' : undefined }}
       className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out overflow-x-clip ${
         articleVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2'
@@ -915,7 +931,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     >
       {showNavigationHint && (
         <div className="fixed top-[max(4.5rem,calc(env(safe-area-inset-top,0px)+3.5rem))] left-1/2 -translate-x-1/2 z-40 rounded-full bg-[#2C2723]/90 px-4 py-2 text-xs font-medium text-white shadow-lg pointer-events-none max-w-[90vw] text-center">
-          上下滑动阅读
+          上下滑动阅读 · 电脑右键切换下一篇
         </div>
       )}
 
