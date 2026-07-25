@@ -29,6 +29,15 @@ test('returns only lemmas not already present in the exposed set', () => {
   );
 });
 
+test('ignores provenance paragraphs containing download URLs', () => {
+  assert.deepEqual(
+    extractUniqueLemmas(
+      'This article was downloaded by zlibrary from https://www.economist.com/asia/a-real-but-selective-crackdown',
+    ),
+    [],
+  );
+});
+
 test('deduplicates repeated words within a paragraph and across calls via the set', () => {
   const exposed = new Set<string>();
 

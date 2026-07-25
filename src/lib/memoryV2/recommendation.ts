@@ -14,6 +14,7 @@ import {
   type CefrRelation,
 } from '../userReadingProfile';
 import { normalizeCefrBand, type CefrBand } from '../articleLevel';
+import { toLemma } from '../proficiency';
 
 export interface Article {
   id: string;
@@ -263,6 +264,7 @@ export class RecommendationEngine {
     const { article, lemmas } = candidate;
     const params = this.params;
     const personalized = shouldUsePersonalizedFilters(candidate, proficiencyMap, params);
+    const globallyColdStart = isGlobalColdStart(proficiencyMap, params);
     const allowedBands = this.effectiveAllowedBands([candidate]);
 
     let dueWordsCount = 0;
@@ -303,7 +305,9 @@ export class RecommendationEngine {
     const averageMemoryScore = knownWordsCount > 0 ? totalMemoryScore / knownWordsCount : 0;
 
     // 计算基础分数
-    let score = personalized ? 0 : params.coldStartBaseScore;
+    // Low article coverage should remain eligible, but must not receive the
+    // full cold-start bonus once the user has meaningful global evidence.
+    let score = globallyColdStart ? params.coldStartBaseScore : 0;
     let reason = '';
 
     // 1. 到期单词得分
@@ -556,15 +560,15 @@ export function countUniqueReviewHits(
   targetWords: ReadonlySet<string> | readonly string[]
 ): number {
   const targets = targetWords instanceof Set
-    ? targetWords
+    ? new Set(Array.from(targetWords).map(toLemma).filter(Boolean))
     : new Set(
         Array.from(targetWords)
-          .map((word) => word.trim().toLowerCase())
+          .map(toLemma)
           .filter(Boolean)
       );
   if (targets.size === 0) return 0;
 
-  const present = new Set(lemmas.map((lemma) => lemma.toLowerCase()));
+  const present = new Set(lemmas.map(toLemma));
   let hits = 0;
   for (const word of targets) {
     if (present.has(word)) hits += 1;
@@ -583,10 +587,10 @@ export function rankCandidatesByReviewHits(
   secondaryScores?: ReadonlyMap<string, number>
 ): ArticleCandidate[] {
   const targets = targetWords instanceof Set
-    ? targetWords
+    ? new Set(Array.from(targetWords).map(toLemma).filter(Boolean))
     : new Set(
         Array.from(targetWords)
-          .map((word) => word.trim().toLowerCase())
+          .map(toLemma)
           .filter(Boolean)
       );
   if (targets.size === 0) return [];

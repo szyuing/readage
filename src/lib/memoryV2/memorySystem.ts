@@ -299,8 +299,8 @@ export class MemorySystemV2 {
       return new Date(a.nextReview).getTime() - new Date(b.nextReview).getTime();
     });
 
-    if (limit) {
-      return dueWords.slice(0, limit);
+    if (limit !== undefined) {
+      return limit > 0 ? dueWords.slice(0, Math.floor(limit)) : [];
     }
 
     return dueWords;

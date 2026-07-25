@@ -201,6 +201,8 @@ export default function App() {
     createInactiveRecommendationFeed
   );
   const recommendationFeedRef = useRef(recommendationFeed);
+  const [recommendationArticles, setRecommendationArticles] = useState<Article[]>([]);
+  const recommendationArticlesRef = useRef<Article[]>([]);
   const recommendationContextRef = useRef<RecommendationContext | null>(null);
   const recommendationRequestIdRef = useRef(0);
   const recommendationAbortControllerRef = useRef<AbortController | null>(null);
@@ -514,12 +516,24 @@ export default function App() {
     return next;
   };
 
+  const updateRecommendationArticles = (
+    update: Article[] | ((current: Article[]) => Article[])
+  ): Article[] => {
+    const next = typeof update === 'function'
+      ? update(recommendationArticlesRef.current)
+      : update;
+    recommendationArticlesRef.current = next;
+    setRecommendationArticles(next);
+    return next;
+  };
+
   const resetRecommendationFeed = () => {
     recommendationAbortControllerRef.current?.abort();
     recommendationAbortControllerRef.current = null;
     recommendationRequestIdRef.current += 1;
     recommendationContextRef.current = null;
     recommendationAdvancedArticleIdsRef.current.clear();
+    updateRecommendationArticles([]);
     setIsRecommending(false);
     setRecommendPhase(null);
     updateRecommendationFeed(createInactiveRecommendationFeed());
@@ -687,11 +701,15 @@ export default function App() {
     ingestArticle(article, { open: false, source: 'retry', retryEnrichment: true });
   };
 
-  const handleWordClick = (word: string) => {
+  const handleWordClick = (word: string, articleId?: string) => {
+    const clickedArticle = (articleId && (
+      history.find((article) => article.id === articleId)
+      || recommendationArticlesRef.current.find((article) => article.id === articleId)
+    )) || activeArticle;
     // Memory V2.2: 点击事件在 ReadingScreen 中自动记录
-    pushEvent('click', { articleId: activeArticle?.id, lemma: toLemma(word) });
-    if (activeArticle) {
-      touchSession(activeArticle.id, (session) => ({
+    pushEvent('click', { articleId: clickedArticle?.id, lemma: toLemma(word) });
+    if (clickedArticle) {
+      touchSession(clickedArticle.id, (session) => ({
         ...session,
         clickCount: session.clickCount + 1,
         lastOpenedAt: new Date().toISOString(),
@@ -699,10 +717,14 @@ export default function App() {
     }
   };
 
-  const handleGrammarQuery = (wordOrPhrase: string) => {
+  const handleGrammarQuery = (wordOrPhrase: string, articleId?: string) => {
+    const queriedArticle = (articleId && (
+      history.find((article) => article.id === articleId)
+      || recommendationArticlesRef.current.find((article) => article.id === articleId)
+    )) || activeArticle;
     // Memory V2.2: 语法查询视为普通点击，在 ReadingScreen 中自动记录
     pushEvent('grammar_query', {
-      articleId: activeArticle?.id,
+      articleId: queriedArticle?.id,
       lemma: toLemma(wordOrPhrase),
     });
   };
@@ -935,6 +957,7 @@ export default function App() {
       }
 
       updateRecommendationFeed(startRecommendationFeed(article.id));
+      updateRecommendationArticles([article]);
       openRecommendationArticle(article);
       pushEvent('review_start', { articleId: article.id, detail: reviewWords.join(',') });
       shouldPrefetch = true;
@@ -990,8 +1013,8 @@ export default function App() {
     const current = recommendationFeedRef.current;
     if (
       current.status !== 'active'
-      || routedArticleId !== payload.articleId
       || !current.seenArticleIds.includes(payload.articleId)
+      || !recommendationArticlesRef.current.some((article) => article.id === payload.articleId)
       || recommendationAdvancedArticleIdsRef.current.has(payload.articleId)
     ) return;
 
@@ -1022,7 +1045,16 @@ export default function App() {
     }
 
     updateRecommendationFeed(nextState);
-    openRecommendationArticle(nextArticle);
+    updateRecommendationArticles((articles) => (
+      articles.some((article) => article.id === nextArticle!.id)
+        ? articles
+        : [...articles, nextArticle!]
+    ));
+    ingestArticle(nextArticle, {
+      open: false,
+      source: nextArticle.source === 'ai_generated' ? 'recommend' : 'history',
+      preserveRecommendationFeed: true,
+    });
     void prefetchNextRecommendationArticle();
   };
 
@@ -1128,6 +1160,14 @@ export default function App() {
     && activeArticle
     && recommendationFeed.seenArticleIds.includes(activeArticle.id)
   );
+  const continuousReadingArticles = useMemo(() => {
+    if (!isRecommendationReading) return undefined;
+    const queued = recommendationFeed.queuedArticle;
+    if (!queued || recommendationArticles.some((article) => article.id === queued.id)) {
+      return recommendationArticles;
+    }
+    return [...recommendationArticles, queued];
+  }, [isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
   const goToRecommendation = () => {
     recommendationEntryStartedRef.current = false;
     resetRecommendationFeed();
@@ -1296,8 +1336,9 @@ export default function App() {
 
         {route.kind === 'reading' && activeArticle && (
           <ReadingScreen
-            key={activeArticle.id}
+            key={isRecommendationReading ? 'recommendation-reading-stream' : activeArticle.id}
             article={activeArticle}
+            continuousArticles={continuousReadingArticles}
             importJob={importQueueSnapshot.jobs.find((j) => j.articleId === activeArticle.id) ?? null}
             onRetryImport={() => retryImportEnrichment(activeArticle.id)}
             isRewriting={isRewriting}

@@ -17,7 +17,7 @@ export interface MagazineLemmaIndexArticle {
 }
 
 export interface MagazineLemmaIndex {
-  version: 1;
+  version: number;
   fingerprint: string;
   builtAt: string;
   articleCount: number;

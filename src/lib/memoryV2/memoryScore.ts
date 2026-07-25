@@ -57,13 +57,24 @@ export function calculateMemoryScore(
   const { S_cap, gamma } = params;
 
   // 如果从未复习，返回 0
-  if (!memoryState.lastReview || stability <= 0) {
+  if (
+    !memoryState.lastReview
+    || !Number.isFinite(stability)
+    || stability <= 0
+    || !Number.isFinite(S_cap)
+    || S_cap <= 0
+    || !Number.isFinite(gamma)
+    || gamma < 0
+  ) {
     return 0;
   }
 
   // 计算距上次复习的天数
-  const lastReviewTime = new Date(memoryState.lastReview);
-  const daysSinceReview = (currentTime.getTime() - lastReviewTime.getTime()) / (1000 * 60 * 60 * 24);
+  const lastReviewTime = Date.parse(memoryState.lastReview);
+  if (!Number.isFinite(lastReviewTime) || !Number.isFinite(currentTime.getTime())) {
+    return 0;
+  }
+  const daysSinceReview = (currentTime.getTime() - lastReviewTime) / (1000 * 60 * 60 * 24);
 
   // 计算回忆概率 R(t, S)
   const retention = calculateRetention(daysSinceReview, stability);
@@ -74,7 +85,7 @@ export function calculateMemoryScore(
   // MS(t) = 100 × R(t, S)^γ × M(S)
   const score = 100 * Math.pow(retention, gamma) * masteryModifier;
 
-  return Math.max(0, Math.min(100, score));
+  return Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
 }
 
 /**
@@ -84,7 +95,7 @@ export function calculateMemoryScore(
  * @returns 熟练度等级 (0-4)
  */
 export function scoreToLevel(score: number): 0 | 1 | 2 | 3 | 4 {
-  if (score < 20) return 0;
+  if (!Number.isFinite(score) || score < 20) return 0;
   if (score < 40) return 1;
   if (score < 60) return 2;
   if (score < 85) return 3;

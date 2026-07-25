@@ -16,6 +16,12 @@ function tokenizeParagraph(paragraphText: string): string[] {
   return trimmed ? trimmed.split(/\s+/) : [];
 }
 
+function isMetadataParagraph(paragraphText: string): boolean {
+  // Imported magazine bodies can contain provenance lines such as
+  // "downloaded from https://...". Do not turn a URL slug into one lemma.
+  return /(?:https?:\/\/|www\.)/i.test(paragraphText);
+}
+
 /**
  * Extract Memory V2 learning-unit occurrences in rendered-token order.
  * Highlighted phrases replace their component words so exposure and click
@@ -25,6 +31,8 @@ export function extractLearningUnits(
   paragraphText: string,
   highlightTerms: readonly string[] = [],
 ): ReadingLearningUnit[] {
+  if (isMetadataParagraph(paragraphText)) return [];
+
   const tokens = tokenizeParagraph(paragraphText);
   const matches = getPhraseHighlightMatches(tokens, [...highlightTerms]);
   const allowlist = new Set(

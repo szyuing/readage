@@ -14,6 +14,10 @@ export interface ScrollEndCoordinates {
   scrollHeight: number;
 }
 
+export function hasArticleExitedViewport(lastParagraphBottom: number, viewportTop = 0): boolean {
+  return Number.isFinite(lastParagraphBottom) && lastParagraphBottom <= viewportTop;
+}
+
 export function isLeftSwipeGesture(
   coordinates: SwipeCoordinates,
   minimumDistance = 64,

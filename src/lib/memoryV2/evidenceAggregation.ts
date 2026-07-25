@@ -192,6 +192,7 @@ export function updateDailyEvidence(
     validExposureCount: totalExposures,
     clickedOccurrenceCount: totalClicks,
     pendingGrade,
+    finalizedAt: null,
   };
 }
 

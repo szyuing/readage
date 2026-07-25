@@ -4,6 +4,7 @@ import {
   buildReadingAdvancePayload,
   canAutoAdvanceAtScrollEnd,
   countArticleWords,
+  hasArticleExitedViewport,
   isLeftSwipeGesture,
   minDwellMsBeforeAutoAdvance,
 } from '../src/lib/continuousReading';
@@ -53,4 +54,12 @@ test('scroll-end auto-advance requires a real scroll and enough dwell time', () 
     canAutoAdvanceAtScrollEnd({ scrollTop: 0, clientHeight: 600, scrollHeight: 600 }, 10_000, 4_000),
     false
   );
+});
+
+test('article completion waits until the final paragraph leaves the viewport', () => {
+  assert.equal(hasArticleExitedViewport(1), false);
+  assert.equal(hasArticleExitedViewport(0), true);
+  assert.equal(hasArticleExitedViewport(-12), true);
+  assert.equal(hasArticleExitedViewport(6, 8), true);
+  assert.equal(hasArticleExitedViewport(9, 8), false);
 });
