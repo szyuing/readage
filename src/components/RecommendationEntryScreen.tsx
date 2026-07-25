@@ -1,6 +1,7 @@
 import React from 'react';
 import { ClipboardCheck, Library, RefreshCw, Sparkles } from 'lucide-react';
 import { AppPageHeader } from './AppPageHeader';
+import { ReadAgeLogo } from './ReadAgeBrand';
 
 interface RecommendationEntryScreenProps {
   isLoading: boolean;
@@ -46,7 +47,7 @@ export const RecommendationEntryScreen: React.FC<RecommendationEntryScreenProps>
               <div className="recommendation-loading-orbit">
                 <span />
                 <span />
-                <strong>R</strong>
+                <ReadAgeLogo className="h-12 w-12" />
               </div>
               <div className="recommendation-loading-lines">
                 <span />

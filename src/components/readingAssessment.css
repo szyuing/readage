@@ -68,10 +68,9 @@
   border-bottom: 1px solid var(--line);
 }
 
-.reading-assessment .brand {
+.reading-assessment .readage-assessment-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -79,52 +78,8 @@
   cursor: pointer;
 }
 
-.reading-assessment .brand-mark {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--acid);
-  color: #fff;
-  font-family: Georgia, serif;
-  font-size: 18px;
-  font-style: italic;
-  font-weight: 700;
-}
-
-.reading-assessment .brand > span:last-child {
-  display: grid;
-}
-
-.reading-assessment .brand strong {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 18px;
-}
-
-.reading-assessment .brand small {
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-}
-
-.reading-assessment .header-note {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.reading-assessment .live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--acid);
-  box-shadow: 0 0 0 5px rgba(195, 94, 55, 0.12);
+.reading-assessment .readage-assessment-brand:hover {
+  opacity: 0.82;
 }
 
 .reading-assessment .progress {
@@ -1585,10 +1540,6 @@
   .reading-assessment .choice-cards button {
     text-align: left;
     line-height: 1.4;
-  }
-
-  .reading-assessment .header-note {
-    display: none;
   }
 
   .reading-assessment .progress {

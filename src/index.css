@@ -70,13 +70,6 @@ body {
   background: #587f8f;
 }
 
-.recommendation-loading-orbit strong {
-  color: #2b2723;
-  font-family: Georgia, serif;
-  font-size: 38px;
-  font-style: italic;
-}
-
 @keyframes recommendation-loading-orbit {
   to {
     transform: rotate(382deg);
