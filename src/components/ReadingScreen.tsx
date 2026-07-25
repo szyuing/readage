@@ -43,7 +43,6 @@ import { useMemoryV2Integration } from '../lib/memoryV2Integration';
 import { createWordCardRequest, fetchWordCard } from '../lib/wordCard';
 import { formatSelectionQuote } from '../lib/readingSelection';
 import { WordCardPanel } from './WordCardPanel';
-import { ReadAgeBrand } from './ReadAgeBrand';
 import {
   emitVocabArticleComplete,
   startVocabSession,
@@ -920,8 +919,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       )}
 
-      <header className="sticky top-0 z-20 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-[#E7E2D5] bg-[#F8F6F0]/90 px-2.5 py-2 backdrop-blur-md safe-pt sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4 sm:py-3">
-        <div className="flex min-w-11 items-center">
+      <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 px-4 backdrop-blur-md safe-pt sm:px-6">
+        <div className="mx-auto grid h-16 w-full max-w-[1040px] grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-[#E7E2D5] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="flex min-w-11 items-center">
           <button
             type="button"
             onClick={onBack}
@@ -931,21 +931,16 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <ReadAgeBrand
-            className="ml-2 hidden lg:inline-flex"
-            logoClassName="h-7 w-7"
-            nameClassName="text-base"
-          />
-        </div>
+          </div>
 
-        <div className="text-center min-w-0 px-1 sm:px-2 flex justify-center">
-          {navigation || (
-          <>
-          <h1 className="font-serif text-base sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
-            {article.title}
-          </h1>
-          {(article.levelRating || article.level || article.source) && (
-            <p className="text-[11px] sm:text-xs text-[#8C8478] mt-0.5 truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
+          <div className="text-center min-w-0 px-1 sm:px-2 flex justify-center">
+            {navigation || (
+            <>
+            <h1 className="font-serif text-base sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
+              {article.title}
+            </h1>
+            {(article.levelRating || article.level || article.source) && (
+              <p className="text-[11px] sm:text-xs text-[#8C8478] mt-0.5 truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
               {/* One CEFR badge per article (levelRating is the official grade when present). */}
               {(article.levelRating?.level || article.level) && (
                 <button
@@ -964,26 +959,26 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                 <span> · </span>
               )}
               {article.source && <span>{article.source}</span>}
-            </p>
-          )}
-          </>
-          )}
-        </div>
+              </p>
+            )}
+            </>
+            )}
+          </div>
 
-        <div className="relative justify-self-end">
-          <button
-            type="button"
-            onClick={() => setShowMenu(!showMenu)}
-            className="tap-target inline-flex items-center justify-center p-2.5 hover:bg-[#EFEAE0] active:bg-[#E8E2D5] rounded-xl text-[#524B43] transition-colors"
-            title="Options"
-            aria-label="Options"
-            aria-expanded={showMenu}
-          >
-            <MoreHorizontal className="w-5 h-5" />
-          </button>
+          <div className="relative justify-self-end">
+            <button
+              type="button"
+              onClick={() => setShowMenu(!showMenu)}
+              className="tap-target inline-flex items-center justify-center p-2.5 hover:bg-[#EFEAE0] active:bg-[#E8E2D5] rounded-xl text-[#524B43] transition-colors"
+              title="Options"
+              aria-label="Options"
+              aria-expanded={showMenu}
+            >
+              <MoreHorizontal className="w-5 h-5" />
+            </button>
 
-          {showMenu && (
-            <div className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-sm sm:text-xs text-[#3D372E]">
+            {showMenu && (
+              <div className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-sm sm:text-xs text-[#3D372E]">
               <div className="flex gap-1 p-1 mb-2 bg-[#EFECE3] rounded-lg">
                 {(['normal', 'large', 'xlarge'] as const).map((size) => (
                   <button
@@ -1081,8 +1076,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                   )}
                 </div>
               )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
