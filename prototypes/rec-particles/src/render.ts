@@ -227,6 +227,29 @@ function syncPipelineChips(pipeline: PipelineStage): void {
   });
 }
 
+function recommendationSummary(state: SimState): string {
+  const parts: string[] = [];
+  if (state.catalogSize && state.poolSize) {
+    parts.push(`${state.catalogSize} 篇文章中，${state.poolSize} 篇通过初筛`);
+  } else if (state.catalogSize) {
+    parts.push(`已载入 ${state.catalogSize} 篇文章`);
+  } else if (state.poolSize) {
+    parts.push(`${state.poolSize} 篇候选等待评分`);
+  }
+
+  if (state.totalScored && !state.shortlistSize) {
+    parts.push(`正在比较 ${state.totalScored} 篇候选`);
+  }
+  if (state.shortlistSize) {
+    parts.push(`留下前 ${state.shortlistSize} 篇`);
+  }
+  if (state.winnerRank != null) {
+    parts.push(`最终选中第 ${state.winnerRank} 名`);
+  }
+
+  return parts.join('，') || '等待主站开始推荐';
+}
+
 export function syncHud(state: SimState): void {
   const set = (id: string, text: string) => {
     const el = document.getElementById(id);
@@ -237,17 +260,7 @@ export function syncHud(state: SimState): void {
   set('hud-pipeline', state.pipelineLabel);
   set('hud-source', state.source === '—' ? '—' : state.source);
   set('hud-count', String(state.particles.filter((p) => p.alpha > 0.1).length));
-  set(
-    'hud-stats',
-    [
-      state.catalogSize ? `库 ${state.catalogSize}` : null,
-      state.poolSize ? `候选 ${state.poolSize}` : null,
-      state.totalScored ? `打分 ${state.totalScored}` : null,
-      state.shortlistSize ? `头部 ${state.shortlistSize}` : null,
-      state.winnerRank != null ? `选中 #${state.winnerRank}` : null,
-      state.winnerScore != null ? `分 ${Math.round(state.winnerScore)}` : null,
-    ].filter(Boolean).join(' · ') || '—'
-  );
+  set('hud-stats', recommendationSummary(state));
   set('hud-ms', state.totalMs != null ? `${Math.round(state.totalMs)} ms` : '—');
   set(
     'hud-words',

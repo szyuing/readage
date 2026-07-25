@@ -345,10 +345,10 @@ export function stageHydrate(
       const hitLine = state.winnerReviewHits.length
         ? `命中复习词：${state.winnerReviewHits.join(', ')}`
         : '本篇未命中本轮目标复习词（仍可能因 CEFR/学习区得分入选）';
-      const scoreLine = state.winnerScore != null
-        ? `分数 ${Math.round(state.winnerScore)}${state.winnerRank != null ? ` · 排名 #${state.winnerRank}` : ''}`
+      const rankLine = state.winnerRank != null
+        ? `本轮评分排名第 ${state.winnerRank} 名`
         : '';
-      state.winnerReason = [meta?.reason || p.reason, scoreLine, hitLine].filter(Boolean).join(' · ')
+      state.winnerReason = [meta?.reason || p.reason, rankLine, hitLine].filter(Boolean).join(' · ')
         || '下载并打开这一篇正文';
       found = true;
     } else {
