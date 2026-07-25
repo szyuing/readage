@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildAppPath, parseAppPath } from '../src/lib/appRoutes';
+import { buildAppPath, parseAppPath, resolveInitialAppRoute } from '../src/lib/appRoutes';
 
 test('parses the recommendation entry and supported page paths', () => {
   assert.deepEqual(parseAppPath('/'), { kind: 'recommendation' });
@@ -29,4 +29,13 @@ test('builds stable paths for every route kind', () => {
   assert.equal(buildAppPath({ kind: 'assessment' }), '/assessment');
   assert.equal(buildAppPath({ kind: 'learning' }), '/learning');
   assert.equal(buildAppPath({ kind: 'history' }), '/history');
+});
+
+test('first-time visitors are routed to assessment from home', () => {
+  assert.deepEqual(resolveInitialAppRoute('/', false), { kind: 'assessment' });
+  assert.deepEqual(resolveInitialAppRoute('/', true), { kind: 'recommendation' });
+  // Deep links stay intact even without assessment
+  assert.deepEqual(resolveInitialAppRoute('/library', false), { kind: 'library' });
+  assert.deepEqual(resolveInitialAppRoute('/assessment', false), { kind: 'assessment' });
+  assert.deepEqual(resolveInitialAppRoute('/learning', false), { kind: 'learning' });
 });

@@ -736,9 +736,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   };
 
   const getFontSizeClass = () => {
-    if (fontSize === 'large') return 'text-xl leading-relaxed';
-    if (fontSize === 'xlarge') return 'text-2xl leading-loose';
-    return 'text-lg leading-relaxed';
+    // Mobile-first: slightly larger base for readability; sm+ keeps prior scale.
+    if (fontSize === 'large') return 'text-[1.2rem] leading-[1.75] sm:text-xl sm:leading-relaxed';
+    if (fontSize === 'xlarge') return 'text-[1.35rem] leading-[1.8] sm:text-2xl sm:leading-loose';
+    return 'text-[1.05rem] leading-[1.75] sm:text-lg sm:leading-relaxed';
   };
 
   const shouldIgnoreSwipeTarget = (target: EventTarget | null): boolean => {
@@ -849,33 +850,35 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchCancel}
       style={{ touchAction: mode === 'recommendation-feed' ? 'pan-y' : undefined }}
-      className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out ${
+      className={`min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between relative selection:bg-[#FDE68A] transition-all duration-150 ease-out overflow-x-clip ${
         articleVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-2'
       }`}
     >
       {showNavigationHint && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 rounded-full bg-[#2C2723]/90 px-4 py-2 text-xs font-medium text-white shadow-lg pointer-events-none">
+        <div className="fixed top-[max(4.5rem,calc(env(safe-area-inset-top,0px)+3.5rem))] left-1/2 -translate-x-1/2 z-40 rounded-full bg-[#2C2723]/90 px-4 py-2 text-xs font-medium text-white shadow-lg pointer-events-none max-w-[90vw] text-center">
           上下滑动阅读
         </div>
       )}
 
-      <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 backdrop-blur-md border-b border-[#E7E2D5] px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-20 bg-[#F8F6F0]/90 backdrop-blur-md border-b border-[#E7E2D5] px-2.5 py-2 sm:px-4 sm:py-3 flex items-center justify-between safe-pt">
         <button
+          type="button"
           onClick={onBack}
-          className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
+          className="tap-target inline-flex items-center justify-center p-2.5 hover:bg-[#EFEAE0] active:bg-[#E8E2D5] rounded-xl text-[#524B43] transition-colors"
           title="Back"
+          aria-label="Back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
 
-        <div className="text-center min-w-0 flex-1 px-2 flex justify-center">
+        <div className="text-center min-w-0 flex-1 px-1 sm:px-2 flex justify-center">
           {navigation || (
           <>
-          <h1 className="font-serif text-xl sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[70vw] sm:max-w-lg mx-auto">
+          <h1 className="font-serif text-base sm:text-2xl font-bold leading-tight text-[#2C2723] truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
             {article.title}
           </h1>
           {(article.levelRating || article.level || article.source) && (
-            <p className="text-xs text-[#8C8478] mt-1">
+            <p className="text-[11px] sm:text-xs text-[#8C8478] mt-0.5 truncate max-w-[min(58vw,16rem)] sm:max-w-lg mx-auto">
               {/* One CEFR badge per article (levelRating is the official grade when present). */}
               {(article.levelRating?.level || article.level) && (
                 <button
@@ -902,21 +905,25 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
         <div className="relative">
           <button
+            type="button"
             onClick={() => setShowMenu(!showMenu)}
-            className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
+            className="tap-target inline-flex items-center justify-center p-2.5 hover:bg-[#EFEAE0] active:bg-[#E8E2D5] rounded-xl text-[#524B43] transition-colors"
             title="Options"
+            aria-label="Options"
+            aria-expanded={showMenu}
           >
             <MoreHorizontal className="w-5 h-5" />
           </button>
 
           {showMenu && (
-            <div className="absolute right-0 mt-2 w-52 bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-xs text-[#3D372E]">
+            <div className="absolute right-0 mt-2 w-[min(15rem,calc(100vw-1.5rem))] bg-[#FAF8F3] border border-[#E0D9CB] rounded-xl shadow-lg p-2 z-30 text-sm sm:text-xs text-[#3D372E]">
               <div className="flex gap-1 p-1 mb-2 bg-[#EFECE3] rounded-lg">
                 {(['normal', 'large', 'xlarge'] as const).map((size) => (
                   <button
                     key={size}
+                    type="button"
                     onClick={() => setFontSize(size)}
-                    className={`flex-1 py-1 rounded text-center font-medium ${
+                    className={`flex-1 min-h-10 sm:min-h-0 py-2 sm:py-1 rounded text-center font-medium ${
                       fontSize === size
                         ? 'bg-white shadow-2xs text-[#2B2723]'
                         : 'text-[#6C655C]'
@@ -928,25 +935,27 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
 
               <button
+                type="button"
                 onClick={() => {
                   setShowMenu(false);
                   handleSpeakText(article.content.join(' '));
                 }}
-                className="w-full text-left px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center gap-2"
+                className="w-full text-left min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-2"
               >
-                <Volume2 className="w-4 h-4 text-[#C35E37]" />
+                <Volume2 className="w-4 h-4 text-[#C35E37] shrink-0" />
                 <span>Listen to Full Article</span>
               </button>
 
               {article.paragraphTranslations && article.paragraphTranslations.length > 0 && (
                 <button
+                  type="button"
                   onClick={() => {
                     setShowParagraphTranslations((v) => !v);
                     setShowMenu(false);
                   }}
-                  className="w-full text-left px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center gap-2"
+                  className="w-full text-left min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center gap-2"
                 >
-                  <Globe className="w-4 h-4 text-[#2563EB]" />
+                  <Globe className="w-4 h-4 text-[#2563EB] shrink-0" />
                   <span>{showParagraphTranslations ? '隐藏段落实译' : '显示段落实译'}</span>
                 </button>
               )}
@@ -957,14 +966,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                     type="button"
                     disabled={isRewriting}
                     onClick={() => setShowRewriteLevels((v) => !v)}
-                    className="w-full px-3 py-2 hover:bg-[#F0EBE0] rounded-lg flex items-center justify-center disabled:opacity-50"
+                    className="w-full min-h-11 sm:min-h-0 px-3 py-2.5 sm:py-2 hover:bg-[#F0EBE0] active:bg-[#EFEAE0] rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
                     title={isRewriting ? '正在改写' : '按等级改写'}
                     aria-label={isRewriting ? '正在改写' : '按等级改写'}
                   >
                     <PenLine className="w-4 h-4 text-[#C35E37]" />
+                    <span className="sm:hidden">按等级改写</span>
                   </button>
                   {showRewriteLevels && !isRewriting && (
-                    <div className="px-2 pb-2 grid grid-cols-3 gap-1">
+                    <div className="px-2 pb-2 grid grid-cols-3 gap-1.5">
                       {REWRITE_CEFR_LEVELS.map((lv) => {
                         const current = (article.levelRating?.level || article.level || '').toUpperCase();
                         const isCurrent = current === lv;
@@ -980,7 +990,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
                               setShowMenu(false);
                               onRewriteAtLevel(lv);
                             }}
-                            className={`py-1.5 rounded-lg text-center text-[11px] font-semibold border transition-colors ${
+                            className={`min-h-10 sm:min-h-0 py-2 sm:py-1.5 rounded-lg text-center text-xs sm:text-[11px] font-semibold border transition-colors ${
                               isPreferred
                                 ? 'border-[#C35E37] bg-[#C35E37] text-white'
                                 : isCurrent
@@ -1009,9 +1019,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         </div>
       </header>
 
-      <main className="flex-1 max-w-3xl w-full mx-auto px-6 py-8 sm:py-12 pb-36">
-        <header className="mb-8">
-          <h2 className="font-serif text-2xl sm:text-3xl font-bold leading-tight text-[#2A2621]">
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 py-6 sm:px-6 sm:py-12 pb-[max(7rem,calc(5.5rem+env(safe-area-inset-bottom,0px)))]">
+        <header className="mb-6 sm:mb-8">
+          <h2 className="font-serif text-[1.65rem] sm:text-3xl font-bold leading-tight text-[#2A2621] break-words">
             {article.title}
           </h2>
           {(article.levelRating?.level || article.level || article.source) && (
@@ -1186,7 +1196,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         <div
           ref={contentRef}
           onMouseUp={handleTextSelection}
-          className={`font-serif text-[#2B2723] space-y-8 select-text ${getFontSizeClass()}`}
+          className={`font-serif text-[#2B2723] space-y-6 sm:space-y-8 select-text break-words [overflow-wrap:anywhere] ${getFontSizeClass()}`}
         >
           <section data-reading-article-section={article.id} data-reading-article-id={article.id}>
             {article.content.map((paragraph, pIdx) => {
@@ -1398,13 +1408,15 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
       {(isTranslating || translationResult) && createPortal(
         <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-6 relative">
+          <div className="bg-[#FAF8F3] border border-[#E2DCD0] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-xl p-5 sm:p-6 relative max-h-[min(90dvh,100%)] overflow-y-auto safe-pb">
             <button
+              type="button"
               onClick={() => {
                 setTranslationResult(null);
                 setIsTranslating(false);
               }}
-              className="absolute top-4 right-4 p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full"
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 tap-target inline-flex items-center justify-center p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full"
+              aria-label="Close translation"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1440,11 +1452,11 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       )}
 
       {showChatPanel && !isComposerExpanded && (
-        <div className="fixed bottom-24 right-4 left-4 sm:left-auto sm:right-8 sm:w-96 bg-[#FAF8F3] border border-[#E0DBCF] rounded-2xl shadow-2xl p-4 z-40 max-h-96 flex flex-col">
+        <div className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-40 flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96">
           <div className="flex items-center justify-between border-b border-[#E8E2D5] pb-2 mb-3">
             <div className="min-w-0">
               <span className="font-serif font-semibold text-sm text-[#332E28] flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-[#C35E37]" />
+                <Sparkles className="w-4 h-4 text-[#C35E37] shrink-0" />
                 讨论区 · 就文答疑
               </span>
               <p className="text-[10px] text-[#9A9286] mt-0.5 pl-5">
@@ -1452,17 +1464,19 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </p>
             </div>
             <button
+              type="button"
               onClick={() => setShowChatPanel(false)}
-              className="p-1 hover:bg-[#EFEAE0] rounded-md text-[#666]"
+              className="tap-target inline-flex items-center justify-center p-2 hover:bg-[#EFEAE0] rounded-md text-[#666]"
+              aria-label="Close discussion"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto space-y-3 p-1 text-xs">
+          <div className="flex-1 overflow-y-auto space-y-3 p-1 text-sm sm:text-xs overscroll-contain">
             {chatMessages.map((msg, idx) => (
               <div
                 key={msg.id ?? idx}
-                className={`p-3 rounded-xl max-w-[85%] ${
+                className={`p-3 rounded-xl max-w-[85%] break-words ${
                   msg.sender === 'user'
                     ? 'bg-[#C35E37] text-white ml-auto'
                     : 'bg-[#EFECE3] text-[#2C2722] mr-auto border border-[#E2DDD0]'
@@ -1481,9 +1495,27 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
       )}
 
       {isComposerExpanded ? (
-        <footer className="fixed right-4 top-1/2 z-40 w-[min(28rem,calc(100vw-2rem))] -translate-y-1/2 sm:right-8">
-          <div className="flex max-h-[min(34rem,calc(100vh-2rem))] flex-col gap-1.5 overflow-hidden rounded-2xl border border-[#DDD6C8] bg-[#F8F6F0]/98 p-3 shadow-2xl backdrop-blur-md">
-          <div className="min-h-0 max-h-56 w-full space-y-3 overflow-y-auto p-1 text-xs">
+        <footer
+          className="fixed inset-x-0 bottom-0 z-40 sm:inset-x-auto sm:bottom-auto sm:right-8 sm:top-1/2 sm:w-[min(28rem,calc(100vw-2rem))] sm:-translate-y-1/2"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          <div className="flex max-h-[min(70dvh,34rem)] flex-col gap-1.5 overflow-hidden rounded-t-2xl border border-[#DDD6C8] border-b-0 bg-[#F8F6F0]/98 p-3 shadow-2xl backdrop-blur-md sm:max-h-[min(34rem,calc(100vh-2rem))] sm:rounded-2xl sm:border-b">
+          <div className="flex items-center justify-between gap-2 px-1 sm:hidden">
+            <span className="font-serif text-sm font-semibold text-[#332E28]">讨论区</span>
+            <button
+              type="button"
+              onClick={() => {
+                setIsComposerExpanded(false);
+                setShowChatPanel(false);
+              }}
+              className="tap-target inline-flex items-center justify-center rounded-full p-2 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+              aria-label="Collapse article discussion input"
+              title="Collapse input"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="min-h-0 max-h-[40dvh] w-full space-y-3 overflow-y-auto p-1 text-sm sm:max-h-56 sm:text-xs overscroll-contain">
             {chatMessages.length === 0 && !isSending && (
               <p className="rounded-xl border border-dashed border-[#DDD6C8] bg-white/60 p-3 text-[#756D63]">
                 Start with a question about a sentence, idea, or vocabulary in this article.
@@ -1492,7 +1524,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
             {chatMessages.map((msg, idx) => (
               <div
                 key={msg.id ?? idx}
-                className={`max-w-[85%] rounded-xl p-3 ${
+                className={`max-w-[85%] rounded-xl p-3 break-words ${
                   msg.sender === 'user'
                     ? 'ml-auto bg-[#C35E37] text-white'
                     : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
@@ -1509,7 +1541,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           </div>
           <form
             onSubmit={handleSendQuestion}
-            className="flex w-full shrink-0 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
+            className="flex w-full shrink-0 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2.5 sm:py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
             aria-label="Article discussion"
           >
             <input
@@ -1526,15 +1558,17 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               }}
               placeholder="问大意、难句，或谈谈你的观点…"
               aria-label="Ask about this article"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
+              enterKeyHint="send"
+              autoComplete="off"
+              className="min-w-0 flex-1 bg-transparent text-base sm:text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
             />
             <button
               type="submit"
               disabled={!userInput.trim() || isSending}
-              className="ml-2 shrink-0 rounded-full bg-[#C35E37] p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
+              className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#C35E37] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
               aria-label="Send question"
             >
-              <Send className="w-3.5 h-3.5" />
+              <Send className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           </form>
 
@@ -1544,7 +1578,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               setIsComposerExpanded(false);
               setShowChatPanel(false);
             }}
-            className="shrink-0 self-end rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+            className="hidden sm:inline-flex shrink-0 self-end rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
             aria-label="Collapse article discussion input"
             title="Collapse input"
           >
@@ -1558,7 +1592,7 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           <button
             type="button"
             onClick={() => setIsComposerExpanded(true)}
-            className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 sm:right-8"
+            className="fixed z-40 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-3.5 sm:p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
             aria-label="Open article discussion input"
             aria-expanded={false}
             aria-controls="reading-composer-input"

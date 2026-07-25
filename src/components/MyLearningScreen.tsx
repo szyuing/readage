@@ -1,5 +1,5 @@
-import React from 'react';
-import { CheckCircle2, Clock3 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { CheckCircle2, Clock3, Download, HardDrive, Upload } from 'lucide-react';
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -10,6 +10,12 @@ import {
 } from 'recharts';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
 import { AppPageHeader } from './AppPageHeader';
+import {
+  downloadLocalDataBackup,
+  exportLocalDataBackup,
+  importLocalDataBackup,
+  readBackupFile,
+} from '../lib/localDataBackup';
 
 interface MyLearningScreenProps {
   onBack: () => void;
@@ -55,13 +61,76 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
     severity: metric.severity,
     issueCount: metric.issueCount,
   }));
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [backupBusy, setBackupBusy] = useState<'export' | 'import' | null>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+
+  const handleExportBackup = async () => {
+    setBackupBusy('export');
+    setBackupError(null);
+    setBackupMessage(null);
+    try {
+      const backup = await exportLocalDataBackup();
+      downloadLocalDataBackup(backup);
+      const keyCount = Object.keys(backup.localStorage).length;
+      setBackupMessage(
+        `已导出 ${keyCount} 项本地数据${backup.indexedDb ? '（含词汇记忆库）' : ''}。文件仅保存在你的设备上。`
+      );
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setBackupBusy(null);
+    }
+  };
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file) return;
+    setBackupBusy('import');
+    setBackupError(null);
+    setBackupMessage(null);
+    try {
+      const raw = await readBackupFile(file);
+      const confirmed = window.confirm(
+        '导入将覆盖本浏览器中当前的学习进度、文章历史与词汇记忆，且不可撤销。是否继续？'
+      );
+      if (!confirmed) {
+        setBackupBusy(null);
+        return;
+      }
+      await importLocalDataBackup(raw);
+      setBackupMessage('导入成功，正在刷新页面…');
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 400);
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : '导入失败');
+      setBackupBusy(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] flex flex-col justify-between selection:bg-[#FDE68A]">
       <AppPageHeader onBack={onBack} navigation={navigation} />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        <div className="grid grid-cols-2 gap-4">
+      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-5 sm:space-y-6 safe-pb">
+        <section
+          className="rounded-2xl border border-[#D6E4F0] bg-[#F3F7FB] px-4 py-3 flex gap-3"
+          aria-labelledby="local-data-notice-heading"
+        >
+          <HardDrive className="w-5 h-5 shrink-0 text-[#1E3A8A] mt-0.5" aria-hidden />
+          <div className="min-w-0">
+            <h2 id="local-data-notice-heading" className="text-sm font-semibold text-[#1E3A8A]">
+              学习数据保存在本机浏览器
+            </h2>
+            <p className="mt-1 text-xs leading-relaxed text-[#4A5568]">
+              进度、词表、文章历史与讨论记录只写在你的设备上，不会随账号同步到服务器。
+              换设备或清除站点数据会丢失进度；可用下方「导出备份」保存到文件。
+            </p>
+          </div>
+        </section>
+
+        <div className="grid grid-cols-2 gap-3 sm:gap-4">
           <MetricCard value={articlesReadCount} label="已完成文章" />
           <MetricCard value={masteredWordsCount} label="掌握词 (L4)" />
           <MetricCard value={learningWordsCount} label="学习中 (L1–L3)" />
@@ -126,7 +195,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
           </span>
         </div>
 
-        <section className="space-y-2" aria-labelledby="article-progress-heading">
+        {false && <section className="space-y-2" aria-labelledby="article-progress-heading">
           <h2 id="article-progress-heading" className="font-serif text-lg font-medium text-[#2A2621]">
             按文章的进度
           </h2>
@@ -136,7 +205,7 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
             </p>
           ) : (
             <ul className="space-y-2">
-              {articleProgress.map(({ article, clickCount, discussionCount }) => {
+              {articleProgress.map(({ article, discussionCount }) => {
                 const completed = article.status === 'Completed';
                 return (
                   <li key={article.id}>
@@ -157,7 +226,6 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
                         </span>
                       </div>
                       <div className="flex flex-wrap gap-3 text-[11px] text-[#6B645B]">
-                        <span>查词 {clickCount}</span>
                         <span>讨论 {discussionCount}</span>
                         <span className="text-[#C35E37]">继续 →</span>
                       </div>
@@ -167,9 +235,9 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
               })}
             </ul>
           )}
-        </section>
+        </section>}
 
-        <section
+        {false && <section
           className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-6 shadow-2xs"
           aria-labelledby="weak-points-heading"
         >
@@ -219,6 +287,61 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
                 ))}
               </div>
             </>
+          )}
+        </section>}
+
+        <section
+          className="bg-[#FAF8F3] border border-[#E3DDD1] rounded-2xl p-4 space-y-3"
+          aria-labelledby="local-backup-heading"
+        >
+          <div>
+            <h2 id="local-backup-heading" className="font-serif text-lg font-medium text-[#2A2621]">
+              本地数据备份
+            </h2>
+            <p className="mt-1 text-sm text-[#8C8478]">
+              导出为 JSON 文件，可在本机或另一台设备导入恢复。服务器不保存你的学习档案。
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void handleExportBackup()}
+              disabled={backupBusy !== null}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
+            >
+              <Download className="w-4 h-4" aria-hidden />
+              {backupBusy === 'export' ? '导出中…' : '导出备份'}
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={backupBusy !== null}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCD5C7] bg-white px-3 py-2 text-sm font-medium text-[#332E28] hover:bg-[#F2ECE0] disabled:opacity-60"
+            >
+              <Upload className="w-4 h-4" aria-hidden />
+              {backupBusy === 'import' ? '导入中…' : '导入备份'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                event.target.value = '';
+                void handleImportFile(file);
+              }}
+            />
+          </div>
+          {backupMessage && (
+            <p className="text-xs text-[#2F6B3A]" role="status">
+              {backupMessage}
+            </p>
+          )}
+          {backupError && (
+            <p className="text-xs text-[#A94E2B]" role="alert">
+              {backupError}
+            </p>
           )}
         </section>
 

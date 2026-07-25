@@ -30,8 +30,12 @@
 .reading-assessment .app-shell {
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
-  padding: 0 24px 64px;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 24px calc(64px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(24px, env(safe-area-inset-left, 0px));
+  padding-right: max(24px, env(safe-area-inset-right, 0px));
 }
 
 .reading-assessment .ambient {
@@ -640,6 +644,77 @@
   max-width: 570px;
   color: var(--muted);
   line-height: 1.8;
+}
+
+.reading-assessment .assessment-loading-card {
+  min-height: 478px;
+  border-radius: 0;
+}
+
+.reading-assessment .assessment-loading-icon {
+  width: 112px;
+  height: 112px;
+  margin-bottom: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f3e4da;
+  color: var(--acid);
+  animation: assessment-loading-pulse 1.8s ease-in-out infinite;
+}
+
+.reading-assessment .assessment-loading-bars {
+  width: min(320px, 100%);
+  margin-top: 27px;
+  display: grid;
+  gap: 9px;
+}
+
+.reading-assessment .assessment-loading-bars span {
+  width: 100%;
+  height: 6px;
+  display: block;
+  transform-origin: left center;
+  border-radius: 99px;
+  background: var(--acid);
+  opacity: 0.25;
+  animation: assessment-loading-bar 1.2s ease-in-out infinite;
+}
+
+.reading-assessment .assessment-loading-bars span:nth-child(2) {
+  width: 78%;
+  animation-delay: 120ms;
+}
+
+.reading-assessment .assessment-loading-bars span:nth-child(3) {
+  width: 62%;
+  animation-delay: 240ms;
+}
+
+@keyframes assessment-loading-pulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+    opacity: 0.78;
+  }
+
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes assessment-loading-bar {
+  0%,
+  100% {
+    transform: scaleX(0.45);
+    opacity: 0.25;
+  }
+
+  50% {
+    transform: scaleX(1);
+    opacity: 0.85;
+  }
 }
 
 .reading-assessment .orbit {
@@ -1561,11 +1636,26 @@
 
 @media (max-width: 768px) {
   .reading-assessment .app-shell {
-    padding: 0 18px 48px;
+    padding: 0 16px calc(48px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
   }
 
   .reading-assessment .site-header {
-    height: 74px;
+    height: auto;
+    min-height: 64px;
+    padding-top: env(safe-area-inset-top, 0px);
+    gap: 8px;
+  }
+
+  .reading-assessment button {
+    min-height: 44px;
+  }
+
+  .reading-assessment .option-grid button,
+  .reading-assessment .choice-cards button {
+    text-align: left;
+    line-height: 1.4;
   }
 
   .reading-assessment .header-note {

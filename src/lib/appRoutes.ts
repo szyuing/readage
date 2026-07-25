@@ -50,3 +50,19 @@ export function buildAppPath(route: AppRoute): string {
   }
   return SIMPLE_ROUTE_PATHS[route.kind];
 }
+
+/**
+ * First-time users (no CEFR assessment yet) land on the rating flow
+ * instead of auto-starting the recommendation feed.
+ * Deep links (library / reading / assessment / …) are left alone.
+ */
+export function resolveInitialAppRoute(
+  pathname: string,
+  hasCompletedAssessment: boolean
+): AppRoute {
+  const route = parseAppPath(pathname);
+  if (!hasCompletedAssessment && route.kind === 'recommendation') {
+    return { kind: 'assessment' };
+  }
+  return route;
+}

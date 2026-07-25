@@ -3,7 +3,7 @@ import { createSimState, onPipelineEvent, stepSim } from './sim';
 import { renderSim, syncHud } from './render';
 import { isRecParticleEvent, type RecParticleEvent } from './types';
 import { isVocabParticleEvent } from './vocabTypes';
-import { applyVocabEvent, createVocabSimState, stepVocabSim } from './vocabSim';
+import { applyVocabEvent, createVocabSimState, scrollVocabParticles, stepVocabSim } from './vocabSim';
 import { renderVocabSim, syncVocabHud } from './vocabRender';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -15,6 +15,15 @@ const ctx: CanvasRenderingContext2D = rawCtx;
 const params = new URLSearchParams(window.location.search);
 const allowDemo = params.get('demo') === '1';
 const initialMode = params.get('mode') === 'recommend' ? 'recommend' : 'vocab';
+
+// Enable main-app telemetry in this browser so reading / Recommend events reach this page.
+try {
+  if (window.localStorage.getItem('recParticles') !== '0') {
+    window.localStorage.setItem('recParticles', '1');
+  }
+} catch {
+  // ignore
+}
 
 type ViewMode = 'recommend' | 'vocab';
 let viewMode: ViewMode = initialMode;
@@ -55,7 +64,7 @@ function setViewMode(mode: ViewMode): void {
   const legend = document.querySelector('.legend');
   if (legend) {
     legend.innerHTML = mode === 'vocab'
-      ? '<strong>真实词汇：</strong>段落停留≈曝光 · 点词≈薄弱信号 · 读完=本篇 lemma 标记。颜色=L0–L4，靠近中心=MS 更高。'
+      ? '<strong>怎么看：</strong>像生词本。看见了 / 查过 / 读过 用标签区分。刚操作的词会放大讲一句人话。没有转圈。'
       : '<strong>真实推荐：</strong>全库打分→过滤→头部→日种子→打开正文。默认不模拟。';
   }
   if (mode === 'vocab') syncVocabHud(vocabState);
@@ -171,6 +180,12 @@ function frame(now: number): void {
 resize();
 window.addEventListener('resize', resize);
 
+canvas.addEventListener('wheel', (event) => {
+  if (viewMode !== 'vocab') return;
+  scrollVocabParticles(vocabState, event.deltaY);
+  event.preventDefault();
+}, { passive: false });
+
 document.querySelectorAll('[data-view-mode]').forEach((el) => {
   el.addEventListener('click', () => {
     const mode = el.getAttribute('data-view-mode') as ViewMode;
@@ -203,9 +218,14 @@ if (allowDemo && viewMode === 'recommend') {
   setStatus(
     'wait',
     viewMode === 'vocab'
-      ? '词汇模式 · 打开文章阅读/点词即可看到真实粒子变化'
+      ? '生词本模式 · 主站阅读/点词后词会一张张出现'
       : '推荐模式 · 主站点推荐后显示真实流水线'
   );
+  if (viewMode === 'vocab') {
+    vocabState.title = '这是一本会动的生词本';
+    vocabState.lastStory = '打开主站文章：停在一段上 = 看见了；点词 = 查过；读完 = 读过。';
+    syncVocabHud(vocabState);
+  }
 }
 
 requestAnimationFrame(frame);

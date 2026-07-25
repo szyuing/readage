@@ -17,9 +17,16 @@ function isLearningEvent(value: unknown): value is LearningEvent {
 
 const DEFAULT_API = 'http://127.0.0.1:3000';
 
+/** Same-origin when hosted under /lab/particles/; standalone :5177 still hits main app :3000. */
 function apiBase(): string {
   const params = new URLSearchParams(window.location.search);
-  return (params.get('api') || DEFAULT_API).replace(/\/$/, '');
+  const override = params.get('api')?.trim();
+  if (override) return override.replace(/\/$/, '');
+  // Built into main dist and served on production (readage.xyz/lab/particles/)
+  if (typeof window !== 'undefined' && window.location.port !== '5177') {
+    return window.location.origin;
+  }
+  return DEFAULT_API;
 }
 
 export type BusStatusHandler = (status: {

@@ -1,4 +1,5 @@
 ﻿import type { TutorRequest, TutorResponse, TutorSuccessResponse } from '../types';
+import { getJsonApiHeaders } from './apiAuth';
 
 /** Interactive recommendations should fall back before the UI feels stuck. */
 export const RECOMMENDATION_INTERACTION_BUDGET_MS = 15_000;
@@ -206,7 +207,7 @@ async function postTutorOnce<T>(
     acquired = true;
     const response = await waitForAbort(fetcher('/api/tutor', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getJsonApiHeaders(),
       body: JSON.stringify(request),
       signal: controller.signal,
     }), controller.signal);

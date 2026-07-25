@@ -1,7 +1,8 @@
 import type { VocabLevel, VocabParticleEvent, VocabWordSnapshot } from './vocabTypes';
 import { LEVEL_LABELS } from './vocabTypes';
 
-export type VocabParticleRole = 'due' | 'exposed' | 'clicked' | 'completed';
+/** What happened to this word in the current reading session. */
+export type VocabStatus = 'pending' | 'seen' | 'looked_up' | 'in_finished';
 
 export interface VocabParticle {
   wordId: string;
@@ -9,17 +10,20 @@ export interface VocabParticle {
   y: number;
   vx: number;
   vy: number;
-  radius: number;
-  targetOrbit: number;
+  targetX: number;
+  targetY: number;
+  w: number;
+  h: number;
+  labelLines: string[];
   memoryScore: number;
   level: VocabLevel;
   alpha: number;
-  role: VocabParticleRole;
+  status: VocabStatus;
   exposureCount: number;
   clickCount: number;
-  flash: number; // 0..1 click flash
+  glow: number;
+  lastTouch: number;
   birth: number;
-  lastArticleId?: string;
 }
 
 export interface VocabSimState {
@@ -30,17 +34,26 @@ export interface VocabSimState {
   pulse: number;
   lastEvent: string;
   lastWord: string;
+  lastStory: string;
   articleId: string;
   sessionId: string;
-  stats: {
-    due: number;
-    exposed: number;
-    clicked: number;
-    completed: number;
-  };
+  stats: { pending: number; seen: number; looked_up: number; in_finished: number };
   title: string;
   detail: string;
+  layoutTop: number;
+  focusWordId: string | null;
+  focusUntil: number;
+  scrollOffset: number;
+  contentHeight: number;
+  contentViewportHeight: number;
 }
+
+export const STATUS_LABEL: Record<VocabStatus, string> = {
+  pending: '待复习',
+  seen: '看见了',
+  looked_up: '查过',
+  in_finished: '读过',
+};
 
 export function createVocabSimState(): VocabSimState {
   return {
@@ -49,209 +62,277 @@ export function createVocabSimState(): VocabSimState {
     width: 1,
     height: 1,
     pulse: 0,
-    lastEvent: '等待阅读…',
+    lastEvent: '还没有阅读事件',
     lastWord: '—',
+    lastStory: '打开主站文章，慢慢往下读或点一个词。这里会像生词本一样记下刚才发生的事。',
     articleId: '—',
     sessionId: '—',
-    stats: { due: 0, exposed: 0, clicked: 0, completed: 0 },
-    title: '词汇熟练度 · 真实 Memory V2',
-    detail: '在主站阅读：段落停留曝光、点词查词、读完一篇后，这里会实时变化。',
+    stats: { pending: 0, seen: 0, looked_up: 0, in_finished: 0 },
+    title: '这是一本会动的生词本',
+    detail: '不是装饰动画：词出现 = 你在文中遇见了它。',
+    layoutTop: 88,
+    focusWordId: null,
+    focusUntil: 0,
+    scrollOffset: 0,
+    contentHeight: 0,
+    contentViewportHeight: 0,
   };
 }
 
-function maxOrbit(state: VocabSimState): number {
-  return Math.min(state.width, state.height) * 0.42;
+function statusRank(status: VocabStatus): number {
+  return { pending: 0, seen: 1, in_finished: 2, looked_up: 3 }[status];
 }
 
-function scoreOrbit(score: number, maxR: number): number {
-  // Higher MS → closer to center (more mastered)
-  const t = Math.max(0, Math.min(1, score / 100));
-  return maxR * (0.12 + (1 - t) * 0.78);
+function mergeStatus(current: VocabStatus, next: VocabStatus): VocabStatus {
+  if (current === 'looked_up') return 'looked_up';
+  return statusRank(next) >= statusRank(current) ? next : current;
 }
 
-function levelRadius(level: VocabLevel, score: number): number {
-  return 3.5 + level * 1.4 + (score / 100) * 4;
+function measureChip(wordId: string, maxWidth = 240): { w: number; h: number; labelLines: string[] } {
+  const maxCharacters = Math.max(10, Math.floor((maxWidth - 42) / 6.4));
+  const parts = wordId.split(/\s+/);
+  const labelLines: string[] = [];
+  let line = '';
+
+  for (const part of parts) {
+    if (!line || line.length + part.length + 1 <= maxCharacters) {
+      line = line ? `${line} ${part}` : part;
+    } else {
+      labelLines.push(line);
+      line = part;
+    }
+  }
+  if (line) labelLines.push(line);
+  if (!labelLines.length) labelLines.push(wordId);
+
+  while (labelLines.some((item) => item.length > maxCharacters)) {
+    const index = labelLines.findIndex((item) => item.length > maxCharacters);
+    const item = labelLines[index];
+    labelLines.splice(index, 1, item.slice(0, maxCharacters), item.slice(maxCharacters));
+  }
+
+  const longestLine = Math.max(...labelLines.map((item) => item.length));
+  return {
+    w: Math.min(maxWidth, Math.max(72, 34 + longestLine * 6.4)),
+    h: labelLines.length > 1 ? 42 : 30,
+    labelLines,
+  };
 }
 
-function ensureParticle(
-  state: VocabSimState,
-  snap: VocabWordSnapshot,
-  role: VocabParticleRole
-): VocabParticle {
-  let p = state.particles.find((row) => row.wordId === snap.wordId);
-  const maxR = maxOrbit(state);
-  const cx = state.width / 2;
-  const cy = state.height / 2;
-  if (!p) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = maxR * (0.5 + Math.random() * 0.4);
-    p = {
+function ensure(state: VocabSimState, snap: VocabWordSnapshot, status: VocabStatus): VocabParticle {
+  let particle = state.particles.find((row) => row.wordId === snap.wordId);
+  const size = measureChip(snap.wordId);
+  if (!particle) {
+    particle = {
       wordId: snap.wordId,
-      x: cx + Math.cos(angle) * r,
-      y: cy + Math.sin(angle) * r,
+      x: state.width * 0.58,
+      y: state.height * 0.55,
       vx: 0,
       vy: 0,
-      radius: levelRadius(snap.level, snap.memoryScore),
-      targetOrbit: scoreOrbit(snap.memoryScore, maxR),
+      targetX: state.width * 0.58,
+      targetY: state.height * 0.55,
+      w: size.w,
+      h: size.h,
+      labelLines: size.labelLines,
       memoryScore: snap.memoryScore,
       level: snap.level,
       alpha: 0,
-      role,
+      status,
       exposureCount: 0,
       clickCount: 0,
-      flash: 0,
+      glow: 1,
+      lastTouch: performance.now(),
       birth: performance.now(),
     };
-    state.particles.push(p);
+    state.particles.push(particle);
+  } else {
+    particle.status = mergeStatus(particle.status, status);
+    particle.memoryScore = snap.memoryScore;
+    particle.level = snap.level;
+    particle.w = size.w;
+    particle.h = size.h;
+    particle.labelLines = size.labelLines;
+    particle.glow = 1;
+    particle.lastTouch = performance.now();
   }
-  p.memoryScore = snap.memoryScore;
-  p.level = snap.level;
-  p.radius = levelRadius(snap.level, snap.memoryScore);
-  p.targetOrbit = scoreOrbit(snap.memoryScore, maxR);
-  // Role priority: clicked > completed > exposed > due
-  const rank = { due: 0, exposed: 1, completed: 2, clicked: 3 } as const;
-  if (rank[role] >= rank[p.role]) p.role = role;
-  return p;
+  return particle;
 }
 
 function recomputeStats(state: VocabSimState): void {
-  const s = { due: 0, exposed: 0, clicked: 0, completed: 0 };
-  for (const p of state.particles) {
-    if (p.clickCount > 0) s.clicked += 1;
-    if (p.exposureCount > 0) s.exposed += 1;
-    if (p.role === 'due' && p.exposureCount === 0 && p.clickCount === 0) s.due += 1;
-    if (p.role === 'completed') s.completed += 1;
+  const stats = { pending: 0, seen: 0, looked_up: 0, in_finished: 0 };
+  for (const particle of state.particles) stats[particle.status] += 1;
+  state.stats = stats;
+}
+
+export interface VocabBoardLayout {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  contentTop: number;
+  contentBottom: number;
+}
+
+export function getVocabBoardLayout(
+  state: Pick<VocabSimState, 'width' | 'height' | 'layoutTop'>,
+): VocabBoardLayout {
+  const compact = state.width <= 720;
+  // Mirrors #hud: 24px left inset + a 438px maximum width + a 36px gutter.
+  const left = compact ? 16 : Math.min(438, state.width - 48) + 60;
+  const top = compact ? state.layoutTop + 314 : state.layoutTop + 28;
+  const width = Math.max(0, state.width - left - (compact ? 16 : 36));
+  const height = Math.max(0, state.height - top - (compact ? 16 : 48));
+  return {
+    left,
+    top,
+    width,
+    height,
+    contentTop: top + 94,
+    contentBottom: top + height - 16,
+  };
+}
+
+/** Packs full word labels into a board whose content is clipped and scrollable. */
+export function layoutVocabParticles(state: VocabSimState): void {
+  const board = getVocabBoardLayout(state);
+  const maxWidth = Math.max(72, board.width - 24);
+  const startX = board.left + 12;
+  const maxX = board.left + board.width - 12;
+  const gapX = 8;
+  const gapY = 6;
+  let x = startX;
+  let y = board.contentTop;
+  let rowHeight = 0;
+
+  for (const particle of [...state.particles].sort((a, b) => b.lastTouch - a.lastTouch)) {
+    const size = measureChip(particle.wordId, maxWidth);
+    if (x > startX && x + size.w > maxX) {
+      x = startX;
+      y += rowHeight + gapY;
+      rowHeight = 0;
+    }
+    particle.w = size.w;
+    particle.h = size.h;
+    particle.labelLines = size.labelLines;
+    particle.targetX = x + size.w / 2;
+    particle.targetY = y + size.h / 2;
+    x += size.w + gapX;
+    rowHeight = Math.max(rowHeight, size.h);
   }
-  // completed counted as particles marked complete this session
-  s.completed = state.particles.filter((p) => p.role === 'completed').length;
-  state.stats = s;
+
+  state.contentHeight = state.particles.length ? y + rowHeight - board.contentTop : 0;
+  state.contentViewportHeight = Math.max(0, board.contentBottom - board.contentTop);
+  state.scrollOffset = Math.min(
+    Math.max(0, state.scrollOffset),
+    Math.max(0, state.contentHeight - state.contentViewportHeight),
+  );
+}
+
+export function scrollVocabParticles(state: VocabSimState, deltaY: number): void {
+  const maxOffset = Math.max(0, state.contentHeight - state.contentViewportHeight);
+  state.scrollOffset = Math.min(maxOffset, Math.max(0, state.scrollOffset + deltaY));
 }
 
 export function applyVocabEvent(state: VocabSimState, event: VocabParticleEvent): void {
   state.live = true;
   state.sessionId = event.sessionId;
+  const now = performance.now();
 
   switch (event.type) {
     case 'vocab_session': {
       state.articleId = event.articleId || state.articleId;
-      state.lastEvent = '开始阅读会话';
-      state.title = event.articleId
-        ? `阅读中 · ${event.articleId.slice(0, 28)}`
-        : '阅读会话开始';
+      state.lastEvent = '开始读一篇文章';
+      state.title = '开始读了';
+      state.lastStory = '下面出现的词，都是你在这篇里真实遇见或查过的。';
       if (event.dueWords?.length) {
-        for (const word of event.dueWords) {
-          ensureParticle(state, word, 'due');
-        }
-        state.detail = `到期/追踪词 ${event.dueWords.length} 个已入场（真实 Memory V2）`;
-        state.lastWord = event.dueWords[0]?.wordId || '—';
+        for (const word of event.dueWords) ensure(state, word, 'pending');
+        state.detail = `先放了 ${event.dueWords.length} 个待复习词`;
+        state.lastWord = event.dueWords[0]?.wordId ?? '—';
       } else {
-        state.detail = '等待段落曝光或点词…';
+        state.detail = '还没有词。往下读一段，或点一个词试试。';
       }
+      state.focusWordId = null;
       break;
     }
     case 'vocab_exposure': {
       state.articleId = event.articleId;
-      state.lastEvent = `段落曝光 p${event.paragraphIndex}`;
+      state.lastEvent = '读到一段（曝光）';
       for (const word of event.words) {
-        const p = ensureParticle(state, word, 'exposed');
-        p.exposureCount += 1;
-        p.lastArticleId = event.articleId;
-        p.alpha = Math.max(p.alpha, 0.85);
+        const particle = ensure(state, word, 'seen');
+        particle.exposureCount += 1;
       }
-      state.lastWord = event.words[0]?.wordId || state.lastWord;
-      state.detail = `曝光 ${event.words.length} 词 · 例 ${state.lastWord} · ${LEVEL_LABELS[event.words[0]?.level ?? 0]} · MS ${Math.round(event.words[0]?.memoryScore ?? 0)}`;
-      state.title = '真实曝光写入 Memory V2';
+      const sample = event.words[0];
+      state.lastWord = sample?.wordId ?? state.lastWord;
+      state.focusWordId = sample?.wordId ?? null;
+      state.focusUntil = now + 2600;
+      state.title = sample ? `看见了「${sample.wordId}」` : '看见了一批词';
+      state.lastStory = sample
+        ? `你在文中停住看了一段。系统记下「${sample.wordId}」等 ${event.words.length} 个词被看见（还没点开查）。${LEVEL_LABELS[sample.level]} · 分数 ${Math.round(sample.memoryScore)}。`
+        : `这一段曝光了 ${event.words.length} 个词。`;
+      state.detail = state.lastStory;
       break;
     }
     case 'vocab_click': {
       state.articleId = event.articleId;
-      state.lastEvent = '点词（Again 证据）';
-      const p = ensureParticle(state, event.word, 'clicked');
-      p.clickCount += 1;
-      p.flash = 1;
-      p.lastArticleId = event.articleId;
-      p.alpha = 1;
+      state.lastEvent = '查了一个词';
+      const particle = ensure(state, event.word, 'looked_up');
+      particle.clickCount += 1;
       state.lastWord = event.word.wordId;
-      state.detail = `点击 ${event.word.wordId} · ${LEVEL_LABELS[event.word.level]} · MS ${Math.round(event.word.memoryScore)} · 当日点击计为薄弱信号`;
-      state.title = `点词 · ${event.word.wordId}`;
+      state.focusWordId = event.word.wordId;
+      state.focusUntil = now + 3200;
+      state.title = `查了「${event.word.wordId}」`;
+      state.lastStory = `你点开了「${event.word.wordId}」。今天会记成偏弱信号（Again）。当前 ${LEVEL_LABELS[event.word.level]} · 分数 ${Math.round(event.word.memoryScore)}。`;
+      state.detail = state.lastStory;
       break;
     }
     case 'vocab_article_complete': {
       state.articleId = event.articleId;
-      state.lastEvent = '文章阅读完成';
+      state.lastEvent = '这篇文章读完了';
       const lemmas = event.exposedLemmas || [];
-      const snaps = event.words?.length
+      const snapshots = event.words?.length
         ? event.words
-        : lemmas.map((wordId) => ({
-            wordId,
-            memoryScore: 0,
-            level: 0 as VocabLevel,
-          }));
-      for (const word of snaps) {
-        const p = ensureParticle(state, word, 'completed');
-        p.alpha = 1;
-        p.lastArticleId = event.articleId;
-      }
-      // mark any exposed lemma without snapshot
+        : lemmas.map((wordId) => ({ wordId, memoryScore: 0, level: 0 as VocabLevel }));
+      for (const word of snapshots) ensure(state, word, 'in_finished');
       for (const lemma of lemmas) {
-        if (!state.particles.some((p) => p.wordId === lemma)) {
-          ensureParticle(state, { wordId: lemma, memoryScore: 0, level: 0 }, 'completed');
+        if (!state.particles.some((particle) => particle.wordId === lemma)) {
+          ensure(state, { wordId: lemma, memoryScore: 0, level: 0 }, 'in_finished');
         }
       }
-      state.lastWord = snaps[0]?.wordId || lemmas[0] || state.lastWord;
-      state.detail = `读完 ${event.articleId.slice(0, 24)} · 本篇曝光 lemma ${lemmas.length} 个`;
-      state.title = '文章完成 · 曝光集提交';
+      state.lastWord = snapshots[0]?.wordId || lemmas[0] || state.lastWord;
+      state.focusWordId = state.lastWord === '—' ? null : state.lastWord;
+      state.focusUntil = now + 2800;
+      state.title = '这篇读完了';
+      state.lastStory = `本篇共记下 ${lemmas.length} 个词。查过的仍标成「查过」；其余标成「读过」。`;
+      state.detail = state.lastStory;
       break;
     }
   }
+
   recomputeStats(state);
+  layoutVocabParticles(state);
 }
 
 export function stepVocabSim(state: VocabSimState, dt: number): void {
   state.pulse += dt;
-  const cx = state.width / 2;
-  const cy = state.height / 2;
-  const particles = state.particles;
-  const doSep = particles.length <= 80;
+  if (state.particles.length) layoutVocabParticles(state);
 
-  for (let i = 0; i < particles.length; i += 1) {
-    const p = particles[i];
-    const dx = p.x - cx;
-    const dy = p.y - cy;
-    const dist = Math.hypot(dx, dy) || 0.0001;
-    const nx = dx / dist;
-    const ny = dy / dist;
-    const err = dist - Math.max(8, p.targetOrbit);
-    const pull = p.role === 'clicked' ? 2.2 : p.role === 'completed' ? 1.8 : 1.3;
-    p.vx += -nx * err * pull * dt;
-    p.vy += -ny * err * pull * dt;
-    p.vx += -ny * 0.45 * dt * 40;
-    p.vy += nx * 0.45 * dt * 40;
-
-    if (doSep) {
-      for (let j = i + 1; j < particles.length; j += 1) {
-        const q = particles[j];
-        const sx = p.x - q.x;
-        const sy = p.y - q.y;
-        const d = Math.hypot(sx, sy) || 0.0001;
-        const minD = p.radius + q.radius + 5;
-        if (d < minD) {
-          const push = ((minD - d) / minD) * 26 * dt;
-          p.vx += (sx / d) * push;
-          p.vy += (sy / d) * push;
-          q.vx -= (sx / d) * push;
-          q.vy -= (sy / d) * push;
-        }
-      }
+  for (const particle of state.particles) {
+    particle.vx = (particle.targetX - particle.x) * 8;
+    particle.vy = (particle.targetY - particle.y) * 8;
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    if (Math.hypot(particle.targetX - particle.x, particle.targetY - particle.y) < 0.5) {
+      particle.x = particle.targetX;
+      particle.y = particle.targetY;
+      particle.vx = 0;
+      particle.vy = 0;
     }
+    particle.glow = Math.max(0, particle.glow - dt * 0.85);
+    const age = (performance.now() - particle.birth) / 1000;
+    particle.alpha += (Math.min(1, age * 2.5) - particle.alpha) * Math.min(1, dt * 5);
+  }
 
-    p.vx *= 0.95;
-    p.vy *= 0.95;
-    p.x += p.vx * dt * 60;
-    p.y += p.vy * dt * 60;
-    p.flash = Math.max(0, p.flash - dt * 1.8);
-    const age = (performance.now() - p.birth) / 1000;
-    const goal = Math.min(1, 0.35 + age * 2);
-    p.alpha += (goal - p.alpha) * Math.min(1, dt * 4);
+  if (state.focusWordId && performance.now() > state.focusUntil) {
+    state.focusWordId = null;
   }
 }

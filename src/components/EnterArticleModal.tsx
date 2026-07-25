@@ -91,17 +91,19 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
-      <div className="bg-[#FAF8F3] border border-[#E0DBCF] w-full max-w-lg rounded-2xl shadow-2xl p-6 relative">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
+      <div className="bg-[#FAF8F3] border border-[#E0DBCF] w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 relative max-h-[min(92dvh,100%)] overflow-y-auto safe-pb">
         <button
+          type="button"
           onClick={onClose}
           disabled={isGenerating}
-          className="absolute top-4 right-4 p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full disabled:opacity-40"
+          className="absolute top-3 right-3 sm:top-4 sm:right-4 tap-target inline-flex items-center justify-center p-2 text-[#777] hover:bg-[#EFEAE0] rounded-full disabled:opacity-40"
+          aria-label="Close"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <h2 className="font-serif text-2xl font-semibold text-[#2A2621] mb-4">
+        <h2 className="font-serif text-xl sm:text-2xl font-semibold text-[#2A2621] mb-4 pr-10">
           Enter Article
         </h2>
 
@@ -110,7 +112,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             type="button"
             onClick={() => setActiveTab('paste')}
             disabled={isGenerating}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 ${
+            className={`flex-1 min-h-11 sm:min-h-0 py-2.5 sm:py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 ${
               activeTab === 'paste' ? 'bg-white text-[#2B2723] shadow-2xs' : 'text-[#736B60]'
             }`}
           >
@@ -121,12 +123,12 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             type="button"
             onClick={() => setActiveTab('topic')}
             disabled={isGenerating}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 ${
+            className={`flex-1 min-h-11 sm:min-h-0 py-2.5 sm:py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 ${
               activeTab === 'topic' ? 'bg-white text-[#2B2723] shadow-2xs' : 'text-[#736B60]'
             }`}
           >
             <Sparkles className="w-4 h-4 text-[#C35E37]" />
-            <span>AI Topic Generator</span>
+            <span className="truncate">AI Topic</span>
           </button>
         </div>
 
@@ -147,7 +149,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
                 value={customTitle}
                 onChange={(e) => setCustomTitle(e.target.value)}
                 placeholder="e.g. My Favorite English Essay"
-                className="w-full bg-white border border-[#DDD6C8] rounded-xl px-4 py-2.5 text-sm text-[#2B2723] outline-none focus:border-[#C35E37]"
+                className="w-full bg-white border border-[#DDD6C8] rounded-xl px-4 py-3 sm:py-2.5 text-base sm:text-sm text-[#2B2723] outline-none focus:border-[#C35E37]"
               />
             </div>
 
@@ -161,7 +163,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
                 onChange={(e) => setCustomText(e.target.value)}
                 placeholder="Paste English article, text, or lesson paragraph here..."
                 required
-                className="w-full bg-white border border-[#DDD6C8] rounded-xl p-4 text-sm text-[#2B2723] outline-none focus:border-[#C35E37]"
+                className="w-full bg-white border border-[#DDD6C8] rounded-xl p-4 text-base sm:text-sm text-[#2B2723] outline-none focus:border-[#C35E37] min-h-[10rem]"
               />
               <p className="mt-1.5 text-[11px] text-[#8C8478]">
                 先入库并进入阅读；导入模块在后台逐段翻译并评级，译文稍后自动出现。
@@ -171,7 +173,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             <button
               type="submit"
               disabled={!customText.trim()}
-              className="w-full py-3 bg-[#C35E37] hover:bg-[#A94E2B] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs"
+              className="w-full min-h-12 py-3 bg-[#C35E37] hover:bg-[#A94E2B] active:bg-[#A44B29] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs"
             >
               入库并开始阅读
             </button>
@@ -189,7 +191,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
                 placeholder="e.g. Climate change, Tech in Japan, Coffee culture..."
                 required
                 disabled={isGenerating}
-                className="w-full bg-white border border-[#DDD6C8] rounded-xl px-4 py-2.5 text-sm text-[#2B2723] outline-none focus:border-[#C35E37] disabled:opacity-60"
+                className="w-full bg-white border border-[#DDD6C8] rounded-xl px-4 py-3 sm:py-2.5 text-base sm:text-sm text-[#2B2723] outline-none focus:border-[#C35E37] disabled:opacity-60"
               />
             </div>
 
@@ -200,7 +202,7 @@ export const EnterArticleModal: React.FC<EnterArticleModalProps> = ({
             <button
               type="submit"
               disabled={isGenerating || !topicInput.trim()}
-              className="w-full py-3 bg-[#C35E37] hover:bg-[#A94E2B] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs flex items-center justify-center gap-2"
+              className="w-full min-h-12 py-3 bg-[#C35E37] hover:bg-[#A94E2B] active:bg-[#A44B29] disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors shadow-xs flex items-center justify-center gap-2"
             >
               {isGenerating ? (
                 <>

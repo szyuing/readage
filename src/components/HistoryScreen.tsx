@@ -40,38 +40,43 @@ export const HistoryScreen: React.FC<HistoryScreenProps> = ({
         navigation={navigation}
         actions={
           showSearchInput ? (
-            <div className="flex items-center bg-white border border-[#DDD6C8] rounded-xl px-3 py-1.5">
-              <Search className="w-4 h-4 text-[#888] mr-2" />
+            <div className="flex max-w-[min(14rem,46vw)] sm:max-w-none items-center bg-white border border-[#DDD6C8] rounded-xl px-2.5 py-1.5 sm:px-3">
+              <Search className="w-4 h-4 text-[#888] mr-1.5 shrink-0" />
               <input
-                type="text"
+                type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索历史..."
-                className="bg-transparent text-sm outline-none w-36 sm:w-48 text-[#2B2723]"
+                className="bg-transparent text-base sm:text-sm outline-none w-full min-w-0 sm:w-48 text-[#2B2723]"
                 autoFocus
+                enterKeyHint="search"
               />
               <button
+                type="button"
                 onClick={() => {
                   setSearchQuery('');
                   setShowSearchInput(false);
                 }}
-                className="p-1 hover:bg-gray-100 rounded-md text-[#888]"
+                className="tap-target inline-flex items-center justify-center p-1.5 hover:bg-gray-100 rounded-md text-[#888]"
+                aria-label="Close search"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
             <button
+              type="button"
               onClick={() => setShowSearchInput(true)}
-              className="p-2 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
+              className="tap-target inline-flex items-center justify-center p-2.5 hover:bg-[#EFEAE0] rounded-xl text-[#524B43] transition-colors"
               title="Search"
+              aria-label="Search"
             >
               <Search className="w-5 h-5" />
             </button>
           )}
       />
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-8 space-y-4">
+      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-4 safe-pb">
         {filteredArticles.length === 0 ? (
           <div className="text-center py-12 text-[#888] space-y-2">
             <p className="text-sm">还没有学习历史</p>

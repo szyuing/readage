@@ -14,7 +14,7 @@ import {
 import {
   toLemma,
 } from './lib/proficiency';
-import { normalizeArticleSessions, STORAGE_KEYS, usePersistentState } from './lib/storage';
+import { normalizeArticleSessions, readStorage, STORAGE_KEYS, usePersistentState } from './lib/storage';
 import {
   buildWeakPointMetrics,
   calculateLearningStreak,
@@ -71,7 +71,7 @@ import {
   normalizeUserReadingAssessment,
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
-import { buildAppPath, parseAppPath, type AppRoute } from './lib/appRoutes';
+import { buildAppPath, parseAppPath, resolveInitialAppRoute, type AppRoute } from './lib/appRoutes';
 import { BookOpen, BarChart3, History, Library, Sparkles } from 'lucide-react';
 import {
   useDueWords,
@@ -119,7 +119,13 @@ type NavigationOptions = {
 
 function getInitialAppRoute(): AppRoute {
   if (typeof window === 'undefined') return { kind: 'recommendation' };
-  return parseAppPath(window.location.pathname);
+  const storedAssessment = readStorage(
+    window.localStorage,
+    STORAGE_KEYS.readingAssessment,
+    null,
+    normalizeUserReadingAssessment
+  );
+  return resolveInitialAppRoute(window.location.pathname, Boolean(storedAssessment));
 }
 
 function logRecommendationSource(
@@ -998,6 +1004,10 @@ export default function App() {
 
   const startRecommendationFromEntry = () => {
     if (isRecommending) return;
+    if (!assessmentResult) {
+      navigate({ kind: 'assessment' }, { replace: true });
+      return;
+    }
     recommendationEntryStartedRef.current = true;
     void startRecommendationReading(
       'English Idioms & Daily Practice',
@@ -1005,7 +1015,17 @@ export default function App() {
     );
   };
 
+  // First-time: keep users on the CEFR assessment until they have a band.
   useEffect(() => {
+    if (assessmentResult) return;
+    if (route.kind !== 'recommendation') return;
+    navigate({ kind: 'assessment' }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assessmentResult, route.kind]);
+
+  useEffect(() => {
+    // Only auto-start Recommend after the user has completed the rating flow.
+    if (!assessmentResult) return;
     if (route.kind !== 'recommendation' || recommendationEntryStartedRef.current) return;
     recommendationEntryStartedRef.current = true;
     void startRecommendationReading(
@@ -1014,7 +1034,7 @@ export default function App() {
     );
     // The recommendation entry starts once per explicit visit to `/`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.kind]);
+  }, [route.kind, assessmentResult]);
 
   const handleRecommendationAdvance = (payload: ReadingAdvancePayload) => {
     const current = recommendationFeedRef.current;
@@ -1176,6 +1196,10 @@ export default function App() {
     return [...recommendationArticles, queued];
   }, [isRecommendationReading, recommendationArticles, recommendationFeed.queuedArticle]);
   const goToRecommendation = () => {
+    if (!assessmentResult) {
+      navigate({ kind: 'assessment' }, { replace: true });
+      return;
+    }
     recommendationEntryStartedRef.current = false;
     resetRecommendationFeed();
     navigate({ kind: 'recommendation' });
@@ -1186,8 +1210,11 @@ export default function App() {
   const returnHome = goToRecommendation;
   const goBack = () => window.history.back();
   const appNavigation = (
-    <div className="w-full flex items-center justify-center text-xs font-medium text-[#5B544C]">
-      <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
+    <nav
+      className="w-full max-w-full flex items-center justify-center text-xs font-medium text-[#5B544C]"
+      aria-label="Primary navigation"
+    >
+      <div className="nav-scroll-x flex items-center gap-0.5 sm:gap-1.5 px-0.5">
         {(
           [
             { id: 'recommendation' as const, label: 'Recommend', icon: Sparkles },
@@ -1199,7 +1226,9 @@ export default function App() {
         ).map(({ id, label, icon: Icon }) => (
           <button
             key={id}
+            type="button"
             aria-label={label}
+            aria-current={route.kind === id ? 'page' : undefined}
             title={label}
             onClick={() => {
               if (id === 'recommendation') {
@@ -1215,26 +1244,26 @@ export default function App() {
               resetRecommendationFeed();
               navigate({ kind: id });
             }}
-            className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 shrink-0 ${
+            className={`tap-target min-h-10 px-2.5 py-2 sm:min-h-0 sm:px-2.5 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 shrink-0 ${
               route.kind === id
                 ? 'bg-white text-[#C35E37] shadow-2xs font-semibold'
-                : 'hover:bg-[#E4DFD5]'
+                : 'hover:bg-[#E4DFD5] active:bg-[#E0DBCF]'
             }`}
           >
-            <Icon className="w-3.5 h-3.5" />
+            <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             {id === 'library' && (
               <span className="hidden sm:inline">{label}</span>
             )}
           </button>
         ))}
       </div>
-    </div>
+    </nav>
   );
   return (
-    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col">
+    <div className="min-h-screen bg-[#F8F6F0] text-[#2B2723] font-sans flex flex-col overflow-x-clip safe-px">
       {isRecommending && (
-        <div className="bg-[#FEF3C7] border-b border-[#FDE68A] text-center text-xs text-[#92400E] py-2 font-medium flex items-center justify-center gap-3">
-          <span>
+        <div className="bg-[#FEF3C7] border-b border-[#FDE68A] text-center text-xs text-[#92400E] py-2 px-3 font-medium flex items-center justify-center gap-3 flex-wrap">
+          <span className="min-w-0">
             {recommendPhase === 'ai'
               ? `正在生成含复习词的文章（最多等待 ${Math.round(RECOMMENDATION_INTERACTION_BUDGET_MS / 1000)} 秒）…`
               : '正在从本地库匹配推荐文章…'}
@@ -1242,7 +1271,7 @@ export default function App() {
           <button
             type="button"
             onClick={resetRecommendationFeed}
-            className="rounded border border-[#D97706] px-2 py-0.5 hover:bg-[#FDE68A]"
+            className="shrink-0 rounded border border-[#D97706] px-2.5 py-1 min-h-8 hover:bg-[#FDE68A]"
           >
             取消
           </button>
@@ -1311,7 +1340,14 @@ export default function App() {
 
         {route.kind === 'assessment' && (
           <ReadingAssessmentScreen
-            onBack={goToRecommendation}
+            onBack={() => {
+              // Allow escape to Library before first rating; after rating, return to Recommend.
+              if (!assessmentResult) {
+                navigate({ kind: 'library' });
+                return;
+              }
+              goToRecommendation();
+            }}
             previousResult={assessmentResult}
             onComplete={(result) => {
               setAssessmentResult(result);

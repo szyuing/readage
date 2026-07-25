@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { CEFR_LEVELS } from '../data/mockArticles';
 import { getArticleCefrLevel } from '../lib/articleLevel';
+import { getJsonApiHeaders } from '../lib/apiAuth';
 import { AppPageHeader } from './AppPageHeader';
 
 type LibraryTab = 'mine' | 'magazines';
@@ -263,7 +264,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
     try {
       const res = await fetch('/api/magazines/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getJsonApiHeaders(),
         body: JSON.stringify({
           // L1 同步全部；L2 只同步当前杂志
           sources: activeSourceId ? [activeSourceId] : undefined,
@@ -385,7 +386,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
       <AppPageHeader onBack={handleHeaderBack} navigation={navigation} />
 
       {(showTopTabs || showCefr || showSearch) && (
-        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-4 space-y-3">
+        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 pt-3 sm:pt-4 space-y-3">
           {showTopTabs && (
             <div className="flex gap-2 p-1 bg-[#EFECE3] rounded-xl">
               {(
@@ -407,10 +408,10 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
                       setIssueArticles([]);
                     }
                   }}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex-1 min-h-11 sm:min-h-0 py-2.5 sm:py-2 rounded-lg text-sm font-medium transition-colors ${
                     tab === t.id
                       ? 'bg-white text-[#C35E37] shadow-2xs'
-                      : 'text-[#5B544C] hover:text-[#2B2723]'
+                      : 'text-[#5B544C] hover:text-[#2B2723] active:bg-[#E8E2D5]'
                   }`}
                 >
                   {t.label}
@@ -474,7 +475,7 @@ export const LibraryScreen: React.FC<LibraryScreenProps> = ({
         </div>
       )}
 
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-6 space-y-3">
+      <main className="flex-1 max-w-2xl w-full mx-auto px-4 sm:px-6 py-5 sm:py-6 space-y-3 safe-pb">
         {/* ── 我的文章 ── */}
         {tab === 'mine' && (
           <>

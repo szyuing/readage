@@ -103,10 +103,12 @@ export function isRecTelemetryEnabled(): boolean {
   } catch {
     // ignore
   }
-  // Default ON for localhost observation (particle page). Opt out with recParticles=0.
+  // Default ON for local observation and for production hosts that serve /lab/particles.
+  // Opt out: localStorage.recParticles = "0"
   try {
     const host = window.location.hostname;
     if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host === 'readage.xyz' || host.endsWith('.readage.xyz')) return true;
   } catch {
     // ignore
   }

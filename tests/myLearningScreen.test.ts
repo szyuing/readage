@@ -25,7 +25,11 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.match(html, /已完成文章/);
   assert.match(html, /连续学习天数/);
   assert.match(html, /近 7 天学习事件/);
-  assert.match(html, /尚未发现明确薄弱点/);
+  assert.doesNotMatch(html, /\u5c1a\u672a\u53d1\u73b0\u660e\u786e\u8584\u5f31\u70b9/);
+  assert.doesNotMatch(html, /weak-points-heading/);
+  assert.match(html, /学习数据保存在本机浏览器/);
+  assert.match(html, /导出备份/);
+  assert.match(html, /导入备份/);
   assert.doesNotMatch(html, /演示固定值|中位示意/);
 });
 
@@ -50,7 +54,10 @@ test('My Learning exposes completion status and targeted-review loading state', 
   }));
 
   assert.match(html, /已完成/);
-  assert.match(html, /articles · 2 次记录/);
+  assert.doesNotMatch(html, /articles · 2 次记录/);
   assert.match(html, /正在生成复习文章/);
   assert.match(html, /disabled=""/);
+  assert.doesNotMatch(html, /查词 4/);
+  assert.doesNotMatch(html, /article-progress-heading/);
+  assert.doesNotMatch(html, /A completed article/);
 });

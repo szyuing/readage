@@ -12,3 +12,9 @@ local-data/
 *.wav
 # 113MB offline dictionary binary pack (restore from the dictionary distribution)
 vendor/nextword-local-dictionary/data/*.pack
+
+# Deploy secrets / local deploy artifacts
+.env.production
+.deploy_key.pem
+.deploy_token.txt
+

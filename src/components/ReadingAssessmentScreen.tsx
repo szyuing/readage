@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import {
   BAND_ORDER,
   EXAM_OPTIONS,
@@ -694,16 +695,14 @@ export const ReadingAssessmentScreen: React.FC<ReadingAssessmentScreenProps> = (
       )}
 
       {stage === "routing" && (
-        <section className="state-card routing-card" aria-live="polite">
-          <div className="orbit">
-            <span />
-            <span />
-            <strong>R</strong>
+        <section className="state-card assessment-loading-card" aria-busy="true" aria-live="polite">
+          <div className="assessment-loading-icon" aria-hidden="true">
+            <Sparkles className="h-8 w-8" />
           </div>
-          <p className="kicker">Rule-based placement</p>
-          <h1>正在整合你的阅读信号</h1>
-          <p>本地规则正在合并考试量尺、成绩时间、阅读自评与学习阶段。</p>
-          <div className="analysis-lines">
+          <p className="kicker">Reading level check</p>
+          <h1>正在定位你的阅读水平</h1>
+          <p>正在综合你的背景信息，为你匹配合适的起始测试难度。</p>
+          <div className="assessment-loading-bars" aria-hidden="true">
             <span />
             <span />
             <span />

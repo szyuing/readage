@@ -1,123 +1,172 @@
-import type { VocabSimState } from './vocabSim';
+import { getVocabBoardLayout, type VocabParticle, type VocabSimState } from './vocabSim';
 import type { VocabLevel } from './vocabTypes';
-import { LEVEL_LABELS } from './vocabTypes';
 
-/** Design-system aligned level colors (warm paper). */
-const LEVEL_COLOR: Record<VocabLevel, string> = {
-  0: '119, 112, 102',   // muted
-  1: '217, 119, 6',     // warning
-  2: '3, 105, 161',     // info
-  3: '5, 150, 105',     // success
-  4: '195, 94, 55',     // accent terracotta (mastered highlight)
+const LEVEL_STYLE: Record<VocabLevel, { bg: string; border: string; dot: string; text: string }> = {
+  0: { bg: '#F3F0EA', border: '#D8D0C5', dot: '#8B8277', text: '#554E46' },
+  1: { bg: '#FFF5D8', border: '#EFCB6A', dot: '#B7791F', text: '#7B5314' },
+  2: { bg: '#E8F4FF', border: '#8FC7EE', dot: '#2374A8', text: '#174E74' },
+  3: { bg: '#E5F6F0', border: '#7DCDB5', dot: '#187B64', text: '#115949' },
+  4: { bg: '#FDECE5', border: '#E9AA8D', dot: '#B55331', text: '#81351F' },
+};
+
+const STATUS_MARKER = {
+  pending: '待',
+  seen: '见',
+  looked_up: '查',
+  in_finished: '读',
 };
 
 export function renderVocabSim(ctx: CanvasRenderingContext2D, state: VocabSimState): void {
   const { width, height, particles } = state;
+  const board = getVocabBoardLayout(state);
   ctx.fillStyle = '#F8F6F0';
   ctx.fillRect(0, 0, width, height);
 
-  const vignette = ctx.createRadialGradient(
-    width / 2,
-    height * 0.42,
-    Math.min(width, height) * 0.12,
-    width / 2,
-    height * 0.42,
-    Math.min(width, height) * 0.7
-  );
-  vignette.addColorStop(0, 'rgba(250, 248, 243, 0.95)');
-  vignette.addColorStop(1, 'rgba(232, 226, 214, 0.5)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, width, height);
-
-  const cx = width / 2;
-  const cy = height / 2 + 10;
-
-  ctx.strokeStyle = 'rgba(227, 221, 209, 0.95)';
+  ctx.fillStyle = '#FFFEFB';
+  roundRect(ctx, board.left - 8, board.top, board.width + 16, board.height, 18);
+  ctx.fill();
+  ctx.strokeStyle = '#E7E2D5';
   ctx.lineWidth = 1;
-  for (const r of [0.14, 0.28, 0.42]) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(width, height) * r, 0, Math.PI * 2);
+  roundRect(ctx, board.left - 8, board.top, board.width + 16, board.height, 18);
+  ctx.stroke();
+
+  ctx.fillStyle = '#2A2622';
+  ctx.font = '600 20px Georgia, "Times New Roman", serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('本篇生词本', board.left + 20, board.top + 36);
+  ctx.fillStyle = '#8C8478';
+  ctx.font = '400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.fillText(
+    state.live ? `已记录 ${particles.length} 个词 · 最近：${state.lastWord}` : '读主站文章时，词会一张张出现在这里',
+    board.left + 20,
+    board.top + 58,
+  );
+
+  const legendY = board.top + 78;
+  let legendX = board.left + 20;
+  for (const level of [0, 1, 2, 3, 4] as const) {
+    const style = LEVEL_STYLE[level];
+    roundRect(ctx, legendX, legendY - 11, 10, 10, 3);
+    ctx.fillStyle = style.bg;
+    ctx.fill();
+    ctx.strokeStyle = style.border;
     ctx.stroke();
+    ctx.fillStyle = '#6B645B';
+    ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const label = `L${level}`;
+    ctx.fillText(label, legendX + 14, legendY);
+    legendX += ctx.measureText(label).width + 22;
   }
 
-  const ordered = [...particles].sort((a, b) => a.alpha - b.alpha);
-  for (const p of ordered) {
-    if (p.alpha < 0.03) continue;
-    const rgb = LEVEL_COLOR[p.level];
-    const flashBoost = p.flash * 0.45;
-    const a = Math.min(1, p.alpha + flashBoost);
-
-    // Click flash ring (error/orange = Again signal)
-    if (p.flash > 0.05) {
-      ctx.strokeStyle = `rgba(220, 38, 38, ${p.flash * 0.85})`;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius + 6 + p.flash * 8, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Completed soft gold ring
-    if (p.role === 'completed') {
-      ctx.strokeStyle = `rgba(253, 230, 138, ${0.7 * a})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius + 5, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius + 10);
-    glow.addColorStop(0, `rgba(${rgb}, ${0.45 * a})`);
-    glow.addColorStop(1, 'rgba(248, 246, 240, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius + 10, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = `rgba(${rgb}, ${0.75 * a})`;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Lemma label for larger / interactive particles
-    if (p.radius >= 6 || p.flash > 0.2 || p.role === 'clicked' || p.role === 'completed') {
-      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      ctx.fillStyle = `rgba(43, 39, 35, ${0.85 * a})`;
-      ctx.textAlign = 'center';
-      ctx.fillText(p.wordId.slice(0, 16), p.x, p.y - p.radius - 6);
-    }
+  if (particles.length === 0) {
+    ctx.fillStyle = '#A89F92';
+    ctx.font = '400 15px Georgia, "Times New Roman", serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('还是空白的。', board.left + board.width / 2, board.top + board.height * 0.48);
+    ctx.font = '400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.fillText('去主站打开一篇文章，停在一段上，或点一个词。', board.left + board.width / 2, board.top + board.height * 0.48 + 28);
+    return;
   }
+
+  const focusId = state.focusWordId && performance.now() < state.focusUntil ? state.focusWordId : null;
+  const ordered = [...particles].sort((a, b) => {
+    if (a.wordId === focusId) return 1;
+    if (b.wordId === focusId) return -1;
+    return a.lastTouch - b.lastTouch;
+  });
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(board.left, board.contentTop, board.width, state.contentViewportHeight);
+  ctx.clip();
+  ctx.translate(0, -state.scrollOffset);
+  for (const particle of ordered) {
+    if (particle.alpha >= 0.05) drawChip(ctx, particle, particle.wordId === focusId);
+  }
+  ctx.restore();
+
+  if (state.contentHeight > state.contentViewportHeight) {
+    const trackHeight = state.contentViewportHeight;
+    const thumbHeight = Math.max(28, trackHeight * (trackHeight / state.contentHeight));
+    const maxOffset = state.contentHeight - trackHeight;
+    const thumbTop = board.contentTop + (trackHeight - thumbHeight) * (state.scrollOffset / maxOffset);
+    ctx.fillStyle = '#D7D0C4';
+    roundRect(ctx, board.left + board.width - 7, thumbTop, 3, thumbHeight, 2);
+    ctx.fill();
+  }
+}
+
+function drawChip(ctx: CanvasRenderingContext2D, particle: VocabParticle, isFocus: boolean): void {
+  const alpha = particle.alpha;
+  const style = LEVEL_STYLE[particle.level];
+  const scale = isFocus ? 1 + particle.glow * 0.04 : 1;
+  const width = particle.w * scale;
+  const height = particle.h * scale;
+  const left = particle.x - width / 2;
+  const top = particle.y - height / 2;
+
+  ctx.fillStyle = `rgba(43, 39, 35, ${0.07 * alpha})`;
+  roundRect(ctx, left + 1, top + 2, width, height, 9);
+  ctx.fill();
+  ctx.fillStyle = style.bg;
+  roundRect(ctx, left, top, width, height, 9);
+  ctx.fill();
+  ctx.strokeStyle = isFocus || particle.glow > 0.2 ? '#B65332' : style.border;
+  ctx.lineWidth = isFocus || particle.glow > 0.2 ? 1.6 : 1;
+  roundRect(ctx, left, top, width, height, 9);
+  ctx.stroke();
+
+  ctx.fillStyle = style.dot;
+  ctx.beginPath();
+  ctx.arc(left + 14, particle.y, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = style.text;
+  ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const lineStart = particle.labelLines.length > 1 ? particle.y - 7 : particle.y;
+  particle.labelLines.forEach((line, index) => {
+    ctx.fillText(line, left + 26, lineStart + index * 14);
+  });
+
+  ctx.fillStyle = 'rgba(43, 39, 35, 0.14)';
+  roundRect(ctx, left + width - 23, particle.y - 9, 15, 18, 5);
+  ctx.fill();
+  ctx.fillStyle = '#4F4942';
+  ctx.font = '700 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(STATUS_MARKER[particle.status], left + width - 15.5, particle.y + 0.5);
+  ctx.textBaseline = 'alphabetic';
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
 }
 
 export function syncVocabHud(state: VocabSimState): void {
   const set = (id: string, text: string) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
+    const element = document.getElementById(id);
+    if (element) element.textContent = text;
   };
   set('hud-title', state.title);
   set('hud-pipeline', state.lastEvent);
-  set('hud-source', state.articleId);
+  set('hud-source', state.articleId === '—' ? '—' : state.articleId.slice(0, 40));
   set('hud-count', String(state.particles.length));
-  set(
-    'hud-stats',
-    `到期示意 ${state.stats.due} · 已曝光 ${state.stats.exposed} · 已点击 ${state.stats.clicked} · 读完标记 ${state.stats.completed}`
-  );
-  set('hud-ms', '—');
+  set('hud-stats', `看见 ${state.stats.seen} · 查过 ${state.stats.looked_up} · 读过 ${state.stats.in_finished} · 待复习 ${state.stats.pending}`);
+  set('hud-ms', state.live ? '跟读中' : '等待中');
   set('hud-words', state.lastWord);
-  set('hud-hits', state.detail);
+  set('hud-hits', state.lastStory);
   const reason = document.getElementById('hud-reason');
-  if (reason) {
-    const top = [...state.particles]
-      .sort((a, b) => b.clickCount - a.clickCount || b.exposureCount - a.exposureCount)
-      .slice(0, 3)
-      .map((p) => `${p.wordId}(${LEVEL_LABELS[p.level]},×${p.exposureCount}e/${p.clickCount}c)`)
-      .join(' · ');
-    reason.textContent = top
-      ? `活跃词：${top}`
-      : state.detail;
-  }
-
-  // Pipeline chips unused in vocab mode — mark none active
-  document.querySelectorAll('#pipeline-steps [data-step]').forEach((el) => {
-    el.classList.remove('active', 'done');
+  if (reason) reason.textContent = state.lastStory;
+  document.querySelectorAll('#pipeline-steps [data-step]').forEach((element) => {
+    element.classList.remove('active', 'done');
   });
 }

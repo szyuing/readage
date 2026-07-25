@@ -1,0 +1,9 @@
+◇ injected env (17) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[step-realtime] proxy armed at /api/realtime/step
+Server running on http://127.0.0.1:3099
+Magazine API: http://localhost:3099/api/magazines/sources
+Magazine lemma index: http://localhost:3099/api/magazines/lemma-index
+Step Realtime WS: ws://localhost:3099/api/realtime/step
+[magazines] scheduler armed: "0 12 * * 5"
+[magazines] boot sync: all sources (set MAGAZINE_SYNC_ON_BOOT=false to skip)
+[magazines] lemma index warm (boot): 681 articles, vocab=46568, 96ms (lastBuild=2658ms)

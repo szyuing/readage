@@ -17,7 +17,7 @@
 
 ## 本地运行
 
-**前置：** Node.js
+**前置：** Node.js ≥ 20
 
 ```bash
 npm install
@@ -52,6 +52,42 @@ npm run dev
 ```
 
 打开 http://localhost:3000
+
+## 学习数据：浏览器本地（多访客）
+
+**默认模型：** 每位访客的学习进度只保存在**自己的浏览器**（`localStorage` + Memory V2 `IndexedDB`），服务器不存用户档案、不要求登录。
+
+| 存在本机 | 在服务器 |
+|---|---|
+| 文章历史、会话与讨论 | 杂志正文库、词典数据 |
+| 词汇记忆 / FSRS 复习 | AI 代理（翻译、讨论、推荐） |
+| 测评结果、薄弱点、连续天数 | 进程与环境变量（API Key） |
+
+在 **我的学习** 可「导出备份 / 导入备份」JSON，便于换机或防清缓存丢失。
+
+换浏览器、清站点数据、无痕模式会丢失进度（除非先导出）。
+
+## 部署给他人访问
+
+```bash
+# 1) 环境变量（示例）
+# HOST=0.0.0.0
+# PORT=3000
+# APP_API_TOKEN=<长随机串>          # 生产/公网必填：保护 /api/tutor 与杂志同步
+# VITE_APP_API_TOKEN=<同上>        # 构建前端时写入，请求时带上；勿提交仓库
+# STEP_API_KEY / DEEPSEEK_API_KEY 等 LLM 密钥
+# MAGAZINE_SYNC_ON_BOOT=false      # 公网建议关闭启动全量同步，改手动
+
+# 2) 拷贝或同步 data/magazines/（体积较大，未进 git）
+# 3) 构建并启动
+npm run build
+npm start
+```
+
+- 反代 HTTPS（Nginx/Caddy）到 `HOST:PORT`。
+- `VITE_*` 在 **build 时** 生效；改 token 需重新 `npm run build`。
+- 共享 `APP_API_TOKEN` 适合小范围试用；token 会出现在前端产物中，请配合限流/防火墙，勿当作真正的用户鉴权。
+- 外刊内容仅供学习，请支持正版订阅。
 
 ### 外刊杂志（Library → 外刊杂志）
 

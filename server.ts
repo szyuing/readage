@@ -996,6 +996,14 @@ function isLoopbackRequest(req: express.Request): boolean {
   );
 }
 
+/** Particle lab ring-buffer: loopback, or public when REC_DEBUG_PUBLIC is not "0". */
+function isRecDebugAllowed(req: express.Request): boolean {
+  if (isLoopbackRequest(req)) return true;
+  // Behind nginx, socket is often loopback already; also allow same-origin lab on public host.
+  if (process.env.REC_DEBUG_PUBLIC === '0') return false;
+  return true;
+}
+
 function pushRecommendationDebugEvent(event: Record<string, unknown>): void {
   recommendationEventBuffer.push(event);
   if (recommendationEventBuffer.length > REC_EVENT_BUFFER_MAX) {
@@ -1027,8 +1035,8 @@ app.options('/api/debug/recommendation-events', allowRecDebugCors, (_req, res) =
 app.options('/api/debug/recommendation-stream', allowRecDebugCors, (_req, res) => res.status(204).end());
 
 app.post('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
-  if (!isLoopbackRequest(req)) {
-    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  if (!isRecDebugAllowed(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Debug telemetry disabled.' } });
   }
   const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : null;
   if (!body || typeof body.type !== 'string') {
@@ -1043,8 +1051,8 @@ app.post('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
 });
 
 app.get('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
-  if (!isLoopbackRequest(req)) {
-    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  if (!isRecDebugAllowed(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Debug telemetry disabled.' } });
   }
   const sinceRaw = typeof req.query.since === 'string' ? Number(req.query.since) : 0;
   const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
@@ -1057,8 +1065,8 @@ app.get('/api/debug/recommendation-events', allowRecDebugCors, (req, res) => {
 });
 
 app.get('/api/debug/recommendation-stream', allowRecDebugCors, (req, res) => {
-  if (!isLoopbackRequest(req)) {
-    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Loopback only.' } });
+  if (!isRecDebugAllowed(req)) {
+    return res.status(403).json({ ok: false, error: { code: 'FORBIDDEN', message: 'Debug telemetry disabled.' } });
   }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1108,6 +1116,15 @@ async function setupServer() {
     });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    const particlesPath = path.join(distPath, 'lab', 'particles');
+    // Particle lab (vocab proficiency + recommendation pipeline visualizer)
+    app.use(
+      '/lab/particles',
+      express.static(particlesPath, { index: 'index.html', fallthrough: true })
+    );
+    app.get(['/lab/particles', '/lab/particles/'], (_req, res) => {
+      res.sendFile(path.join(particlesPath, 'index.html'));
+    });
     app.use(express.static(distPath));
     app.get('*', (req, res, next) => {
       if (req.originalUrl.startsWith('/api/')) {
@@ -1115,6 +1132,9 @@ async function setupServer() {
           ok: false,
           error: { code: 'NOT_FOUND', message: `API route not found: ${req.method} ${req.originalUrl}` },
         });
+      }
+      if (req.originalUrl.startsWith('/lab/particles')) {
+        return res.sendFile(path.join(particlesPath, 'index.html'));
       }
       return res.sendFile(path.join(distPath, 'index.html'));
     });
