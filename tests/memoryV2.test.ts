@@ -31,6 +31,7 @@ import {
 } from '../src/lib/memoryV2/fsrsIntegration';
 import { MemorySystemV2 } from '../src/lib/memoryV2/memorySystem';
 import type { MemoryStorage } from '../src/lib/memoryV2/storage';
+import { createEmptyRmeProfile } from '../src/lib/memoryV4';
 
 describe('Memory V2.2 - Evidence Aggregation', () => {
   it('场景 A: 同一文章多次未点击 → 只形成一条文章级 Good 候选', () => {
@@ -475,6 +476,7 @@ class EvidenceStorageFake {
   raw = new Map<string, RawWordEvent[]>();
   article = new Map<string, ArticleWordEvidence>();
   daily = new Map<string, DailyWordEvidence>();
+  states = new Map<string, WordMemoryState>();
 
   private rawKey(userId: string, wordId: string, localDate: string) {
     return `${userId}:${wordId}:${localDate}`;
@@ -516,6 +518,27 @@ class EvidenceStorageFake {
   async getDailyEvidence(userId: string, wordId: string, localDate: string) {
     return this.daily.get(`${userId}:${wordId}:${localDate}`) ?? null;
   }
+
+  async saveMemoryState(state: WordMemoryState): Promise<void> {
+    this.states.set(`${state.userId}:${state.wordId}`, state);
+  }
+
+  async getMemoryState(userId: string, wordId: string) {
+    return this.states.get(`${userId}:${wordId}`) ?? null;
+  }
+
+  async getBatchMemoryStates(userId: string, wordIds: string[]) {
+    const rows = new Map<string, WordMemoryState>();
+    for (const wordId of wordIds) {
+      const state = await this.getMemoryState(userId, wordId);
+      if (state) rows.set(wordId, state);
+    }
+    return rows;
+  }
+
+  async getAllMemoryStates(userId: string) {
+    return [...this.states.values()].filter((state) => state.userId === userId);
+  }
 }
 
 function exposureEvent({
@@ -538,10 +561,19 @@ function exposureEvent({
   };
 }
 
+async function seedPreviouslySeenWord(storage: EvidenceStorageFake): Promise<void> {
+  const state = initializeWordMemory('user1', 'constraint');
+  const profile = createEmptyRmeProfile();
+  profile.lastExposureAt = '2026-07-22T10:00:00Z';
+  profile.lastEffectiveExposureAt = '2026-07-22T10:00:00Z';
+  await storage.saveMemoryState({ ...state, rme: profile });
+}
+
 describe('Memory V2.2 - Batch event persistence', () => {
   it('preserves single-event evidence when a later paragraph uses a batch write', async () => {
     const storage = new EvidenceStorageFake();
     const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+    await seedPreviouslySeenWord(storage);
 
     await system.recordEvent(
       exposureEvent({
@@ -560,14 +592,15 @@ describe('Memory V2.2 - Batch event persistence', () => {
 
     const articleEvidence = [...storage.article.values()][0];
     const dailyEvidence = [...storage.daily.values()][0];
-    assert.equal(articleEvidence.validExposureCount, 2);
-    assert.equal(dailyEvidence.validExposureCount, 2);
+    assert.equal(articleEvidence.validExposureCount, 1);
+    assert.equal(dailyEvidence.validExposureCount, 1);
     assert.equal(dailyEvidence.articleCount, 1);
   });
 
   it('preserves same-day evidence from an earlier article batch', async () => {
     const storage = new EvidenceStorageFake();
     const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+    await seedPreviouslySeenWord(storage);
 
     const firstExposure = exposureEvent({
       articleId: 'article-A',
@@ -591,7 +624,7 @@ describe('Memory V2.2 - Batch event persistence', () => {
     ]);
 
     const dailyEvidence = [...storage.daily.values()][0];
-    assert.equal(dailyEvidence.validExposureCount, 2);
+    assert.equal(dailyEvidence.validExposureCount, 1);
     assert.equal(dailyEvidence.clickedOccurrenceCount, 1);
     assert.equal(dailyEvidence.pendingGrade, 'Again');
     assert.equal(dailyEvidence.articleCount, 2);
@@ -599,5 +632,45 @@ describe('Memory V2.2 - Batch event persistence', () => {
       dailyEvidence.articleEvidence.map((item) => item.articleId).sort(),
       ['article-A', 'article-B'],
     );
+  });
+});
+
+describe('RME-V4 - storage bridge', () => {
+  it('creates a V4 word profile on first exposure without producing FSRS evidence', async () => {
+    const storage = new EvidenceStorageFake();
+    const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+
+    await system.recordEvent(exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    }));
+
+    const state = await storage.getMemoryState('user1', 'constraint');
+    const evidence = await storage.getDailyEvidence('user1', 'constraint', '2026-07-24');
+    assert.equal(state?.fsrsCard.reps, 0);
+    assert.equal(state?.rme?.exposureHistory[0]?.kind, 'new');
+    assert.equal(evidence?.validExposureCount, 0);
+    assert.equal(evidence?.pendingGrade, null);
+  });
+
+  it('downgrades the matching V4 exposure quality when the user clicks it', async () => {
+    const storage = new EvidenceStorageFake();
+    const system = new MemorySystemV2(storage as unknown as MemoryStorage);
+    const first = exposureEvent({
+      articleId: 'article-A',
+      occurrenceId: 'article-A:p0:w0:constraint',
+      occurredAt: '2026-07-24T10:00:00Z',
+    });
+
+    await system.recordEvent(first);
+    await system.recordEvent({
+      ...first,
+      eventType: 'click',
+      occurredAt: '2026-07-24T10:00:01Z',
+    });
+
+    const state = await storage.getMemoryState('user1', 'constraint');
+    assert.equal(state?.rme?.exposureHistory[0]?.quality, 0);
   });
 });

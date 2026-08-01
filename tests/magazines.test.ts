@@ -134,4 +134,70 @@ describe('epub parser', () => {
     assert.equal(articles[0].magazineIssueId, 'economist:2026.07.18');
     assert.ok(articles[0].content.length >= 1);
   });
+
+  it('splits multiple semantic articles inside one spine document and removes Atlantic furniture', async () => {
+    const zip = new JSZip();
+    zip.file(
+      'META-INF/container.xml',
+      '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>'
+    );
+    zip.file(
+      'OEBPS/content.opf',
+      '<package><manifest><item id="c1" href="c1.xhtml"/></manifest><spine><itemref idref="c1"/></spine></package>'
+    );
+    const body = Array.from({ length: 45 }, (_, i) => `Sentence ${i} explains the policy and its consequences.`).join(' ');
+    zip.file(
+      'OEBPS/c1.xhtml',
+      `<html><body>
+        <nav>| Next | Section menu | Main menu | Previous |</nav>
+        <article><h1>First <em>Atlantic</em> Story</h1><p>by A. Writer</p><p>${body}</p>
+          <p>Read: A related story</p>
+          <p>This article was downloaded by calibre from https://www.theatlantic.com/magazine/2026/04/first/1/</p>
+        </article>
+        <article><h1>Second Atlantic Story</h1><p>by B. Writer</p><p>${body}</p>
+          <p>This article appears in the April 2026 print edition with the headline “Second.”</p>
+        </article>
+      </body></html>`
+    );
+
+    const buffer = Buffer.from(await zip.generateAsync({ type: 'uint8array' }));
+    const chapters = await parseEpubBuffer(buffer);
+
+    assert.equal(chapters.length, 2);
+    assert.deepEqual(chapters.map((chapter) => chapter.title), [
+      'First Atlantic Story',
+      'Second Atlantic Story',
+    ]);
+    assert.ok(chapters.every((chapter) => chapter.paragraphs.every((paragraph) => !/^Read:|^This article /i.test(paragraph))));
+  });
+
+  it('uses Calibre attribution markers when concatenated articles lack article tags', async () => {
+    const zip = new JSZip();
+    zip.file(
+      'META-INF/container.xml',
+      '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>'
+    );
+    zip.file(
+      'OEBPS/content.opf',
+      '<package><manifest><item id="c1" href="c1.xhtml"/></manifest><spine><itemref idref="c1"/></spine></package>'
+    );
+    const body = Array.from({ length: 45 }, (_, i) => `Sentence ${i} explains the policy and its consequences.`).join(' ');
+    zip.file(
+      'OEBPS/c1.xhtml',
+      `<html><body><h1>First Marker Story</h1><p>${body}</p>
+        <p>This article was downloaded by calibre from https://www.theatlantic.com/magazine/2026/04/first/1/</p>
+        <h1>Second Marker Story</h1><p>${body}</p>
+        <p>This article was downloaded by calibre from https://www.theatlantic.com/magazine/2026/04/second/2/</p>
+      </body></html>`
+    );
+
+    const buffer = Buffer.from(await zip.generateAsync({ type: 'uint8array' }));
+    const chapters = await parseEpubBuffer(buffer);
+
+    assert.equal(chapters.length, 2);
+    assert.deepEqual(chapters.map((chapter) => chapter.title), [
+      'First Marker Story',
+      'Second Marker Story',
+    ]);
+  });
 });

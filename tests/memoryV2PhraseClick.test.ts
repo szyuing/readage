@@ -161,3 +161,42 @@ test('failed paragraph exposure write rolls back occurrence ids so the batch can
     createMemoryOccurrenceId('article-1', 0, unit),
   ]);
 });
+
+test('reading exposure helpers forward recommendation, context, and dwell signals', async () => {
+  const unit = extractLearningUnits(paragraph, highlightTerms)[0];
+  const signals = {
+    isRecommendation: true,
+    contextText: paragraph,
+    dwellTimeMs: 800,
+    expectedDwellTimeMs: 2_400,
+  };
+  let batchItem: Record<string, unknown> | undefined;
+  let clickExposureSignals: Record<string, unknown> | undefined;
+
+  await recordParagraphExposureWithRollback({
+    articleId: 'article-1',
+    paragraphIndex: 0,
+    units: [unit],
+    exposedOccurrenceIds: new Set(),
+    signals,
+    recordExposures: async (items) => {
+      batchItem = items[0] as unknown as Record<string, unknown>;
+    },
+  });
+  await recordMemoryClickWithExposure({
+    articleId: 'article-1',
+    paragraphIndex: 0,
+    unit,
+    exposedOccurrenceIds: new Set(),
+    signals,
+    recordExposure: async (_wordId, _articleId, _occurrenceId, metadata) => {
+      clickExposureSignals = metadata as Record<string, unknown>;
+    },
+    recordClick: async () => undefined,
+  });
+
+  assert.equal(batchItem?.isRecommendation, true);
+  assert.equal(batchItem?.contextText, paragraph);
+  assert.equal(batchItem?.dwellTimeMs, 800);
+  assert.deepEqual(clickExposureSignals, signals);
+});

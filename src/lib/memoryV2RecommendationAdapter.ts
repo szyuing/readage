@@ -23,6 +23,11 @@ import {
   type CefrRecommendationProfile,
 } from './userReadingProfile';
 import type { RecommendationParams } from './memoryV2/recommendation';
+import { scoreArticleOpportunity } from './memoryV4';
+import {
+  rerankRecommendationScoresV5,
+  type V5RecommendationProfile,
+} from './recommendationV5';
 
 /**
  * 从文章中提取所有 lemmas
@@ -50,6 +55,61 @@ function convertToArticleCandidates(articles: Article[]): ArticleCandidate[] {
     article,
     lemmas: extractLemmasFromArticle(article),
   }));
+}
+
+function applyOpportunityRanking(
+  recommendations: RecommendationScore[],
+  candidates: ArticleCandidate[],
+  proficiencyMap: Map<string, WordProficiencyView>,
+  v5Profile?: V5RecommendationProfile,
+): RecommendationScore[] {
+  const opportunityByWord = new Map<string, number>();
+  for (const [wordId, proficiency] of proficiencyMap) {
+    const opportunity = proficiency.opportunityScore;
+    if (typeof opportunity === 'number' && Number.isFinite(opportunity) && opportunity > 0) {
+      opportunityByWord.set(toLemma(wordId), opportunity);
+    }
+  }
+  const candidateById = new Map(candidates.map((candidate) => [candidate.article.id, candidate]));
+
+  const ranked = recommendations
+    .map((recommendation) => {
+      const candidate = candidateById.get(recommendation.articleId);
+      if (!candidate) return recommendation;
+      const scored = scoreArticleOpportunity({
+        lemmas: candidate.lemmas,
+        opportunityByWord,
+        cefrScore: recommendation.cefrScore,
+        // Keep existing engine signals as a bounded secondary tie-breaker.
+        topicScore: Math.max(0, recommendation.score) * 0.25,
+      });
+      return {
+        ...recommendation,
+        score: scored.articleScore,
+        opportunityCoverage: scored.opportunityCoverage,
+        reason: scored.opportunityCoverage > 0
+          ? `${recommendation.reason || '推荐'} · ${scored.coveredWords.length} 个高机会词`
+          : recommendation.reason,
+      };
+    })
+    .sort((left, right) => right.score - left.score);
+
+  if (!v5Profile) return ranked;
+
+  const v5Candidates = ranked.map((recommendation) => {
+    const candidate = candidateById.get(recommendation.articleId);
+    return {
+      articleId: recommendation.articleId,
+      opportunityCoverage: recommendation.opportunityCoverage
+        ?? (recommendation.dueWordsCount * 40),
+      topic: candidate?.article.topic,
+      level: candidate?.article.levelRating?.level
+        || candidate?.article.level
+        || candidate?.article.rewriteTargetLevel,
+      estimatedWordCount: candidate?.article.estimatedWordCount,
+    };
+  });
+  return rerankRecommendationScoresV5(ranked, v5Candidates, v5Profile);
 }
 
 /**
@@ -93,6 +153,8 @@ export interface MemoryV2RecommendationOptions {
   cefrHardFilter?: boolean;
   /** Minimum candidates required before keeping the CEFR window. */
   minCandidatesAfterCefrFilter?: number;
+  /** Opt-in V5 multi-objective ranking profile. */
+  v5Profile?: V5RecommendationProfile;
 }
 
 /**
@@ -101,6 +163,7 @@ export interface MemoryV2RecommendationOptions {
 export class MemoryV2RecommendationAdapter {
   private strategy: RecommendationStrategy;
   private engineOptions: RecommendationParams;
+  private v5Profile?: V5RecommendationProfile;
 
   constructor(options: MemoryV2RecommendationOptions = {}) {
     const {
@@ -112,6 +175,7 @@ export class MemoryV2RecommendationAdapter {
     } = options;
 
     this.strategy = strategy;
+    this.v5Profile = options.v5Profile;
     const weights = this.getStrategyWeights(strategy);
     this.engineOptions = {
       userLevel,
@@ -234,7 +298,13 @@ export class MemoryV2RecommendationAdapter {
     let recommendations = engine.recommend(
       filtered,
       proficiencyMap,
-      Math.max(limit * 2, limit)
+      Math.max(filtered.length, limit)
+    );
+    recommendations = applyOpportunityRanking(
+      recommendations,
+      filtered,
+      proficiencyMap,
+      options.v5Profile ?? this.v5Profile,
     );
 
     if (recentArticleIds.length > 0) {
@@ -356,13 +426,19 @@ export class MemoryV2RecommendationAdapter {
       ?? (this.engineOptions.cefrProfile
         ? projectBandsOntoCatalog(this.engineOptions.cefrProfile.idealBands, availableLevels)
         : undefined);
-    return scoreArticlesForReview(
+    const ranked = scoreArticlesForReview(
       reviewArticles,
       targetIds,
       proficiencyMap,
       this.createEngine({ allowedBands: effectiveBands, cefrHardFilter: false }),
       limit
     );
+    return applyOpportunityRanking(
+      ranked,
+      articleCandidates,
+      proficiencyMap,
+      this.v5Profile,
+    ).slice(0, limit);
   }
 
   /**
@@ -389,6 +465,7 @@ export class MemoryV2RecommendationAdapter {
     if (options.minCandidatesAfterCefrFilter !== undefined) {
       this.engineOptions.minCandidatesAfterCefrFilter = options.minCandidatesAfterCefrFilter;
     }
+    if (options.v5Profile !== undefined) this.v5Profile = options.v5Profile;
   }
 }
 

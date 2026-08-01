@@ -28,6 +28,11 @@ test('My Learning renders real metric labels and honest empty states', () => {
   assert.doesNotMatch(html, /\u5c1a\u672a\u53d1\u73b0\u660e\u786e\u8584\u5f31\u70b9/);
   assert.doesNotMatch(html, /weak-points-heading/);
   assert.match(html, /学习数据保存在本机浏览器/);
+  assert.match(html, /阅读数据说明/);
+  assert.match(html, /词汇学习证据/);
+  assert.match(html, /主动调用 AI/);
+  assert.match(html, /推荐诊断/);
+  assert.match(html, /不使用这些功能时，不会为了统计阅读而上传整篇文章/);
   assert.match(html, /导出备份/);
   assert.match(html, /导入备份/);
   assert.doesNotMatch(html, /演示固定值|中位示意/);

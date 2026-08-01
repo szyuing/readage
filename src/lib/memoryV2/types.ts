@@ -1,3 +1,5 @@
+import type { RmeExposureKind, RmeMemoryProfile } from '../memoryV4/types';
+
 /**
  * Memory Confidence Model V2.2
  * 每日词据聚合 + FSRS 双层记忆状态
@@ -6,8 +8,16 @@
 /** 原始事件类型 */
 export type RawEventType = 'exposure' | 'click';
 
+/** Optional RME-V4 signals collected during normal reading. */
+export interface MemoryExposureSignals {
+  isRecommendation?: boolean;
+  dwellTimeMs?: number;
+  expectedDwellTimeMs?: number;
+  contextText?: string;
+}
+
 /** 原始行为事件（完整保留） */
-export interface RawWordEvent {
+export interface RawWordEvent extends MemoryExposureSignals {
   userId: string;
   wordId: string;
   articleId: string;
@@ -17,6 +27,10 @@ export interface RawWordEvent {
   occurredAt: string;
   /** 用户时区计算的自然日（YYYY-MM-DD） */
   localDate: string;
+  /** V4 classification and quality are optional for V2.2 compatibility. */
+  rmeExposureKind?: RmeExposureKind;
+  rmeQuality?: number;
+  rmeIsValid?: boolean;
 }
 
 /** 文章级词据 */
@@ -31,6 +45,8 @@ export interface ArticleWordEvidence {
   clickedOccurrenceCount: number;
   firstSeenAt: string;
   lastSeenAt: string;
+  /** Average RME quality of valid exposure events, when V4 metadata exists. */
+  averageRmeQuality?: number;
 }
 
 /** 每日词据聚合 */
@@ -48,6 +64,8 @@ export interface DailyWordEvidence {
   clickedOccurrenceCount: number;
   /** 待定评级（当天实时更新） */
   pendingGrade: 'Good' | 'Again' | null;
+  /** Average quality across valid exposures for this day. */
+  averageRmeQuality?: number;
   /** 最终结算时间（UTC ISO） */
   finalizedAt: string | null;
 }
@@ -93,6 +111,8 @@ export interface WordMemoryState {
     learningSteps: number;
     review: string;
   }>;
+  /** Additive RME-V4 profile; absent on legacy V2.2 states. */
+  rme?: RmeMemoryProfile;
 }
 
 /** Memory Score 计算参数 */

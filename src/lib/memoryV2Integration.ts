@@ -8,6 +8,7 @@ import { useCallback, useRef } from 'react';
 import { useMemorySystem } from './memoryV2/hooks';
 import { toLemma } from './proficiency';
 import type { ReadingLearningUnit } from './readingExposure';
+import type { MemoryExposureSignals } from './memoryV2/types';
 import {
   emitVocabClick,
   emitVocabExposure,
@@ -18,10 +19,15 @@ type MemoryEventRecorder = (
   wordId: string,
   articleId: string,
   occurrenceId: string,
+  signals?: MemoryExposureSignals,
 ) => Promise<void>;
 
 type MemoryBatchRecorder = (
-  items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>,
+  items: ReadonlyArray<{
+    wordId: string;
+    articleId: string;
+    occurrenceId: string;
+  } & MemoryExposureSignals>,
 ) => Promise<void>;
 
 /** Build the stable id used by both exposure and click for one occurrence. */
@@ -45,6 +51,7 @@ export async function recordMemoryClickWithExposure({
   exposedOccurrenceIds,
   recordExposure,
   recordClick,
+  signals,
 }: {
   articleId: string;
   paragraphIndex: number;
@@ -52,13 +59,14 @@ export async function recordMemoryClickWithExposure({
   exposedOccurrenceIds: Set<string>;
   recordExposure: MemoryEventRecorder;
   recordClick: MemoryEventRecorder;
+  signals?: MemoryExposureSignals;
 }): Promise<void> {
   const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
 
   if (!exposedOccurrenceIds.has(occurrenceId)) {
     exposedOccurrenceIds.add(occurrenceId);
     try {
-      await recordExposure(unit.wordId, articleId, occurrenceId);
+      await recordExposure(unit.wordId, articleId, occurrenceId, signals);
     } catch (error) {
       exposedOccurrenceIds.delete(occurrenceId);
       throw error;
@@ -78,20 +86,26 @@ export async function recordParagraphExposureWithRollback({
   units,
   exposedOccurrenceIds,
   recordExposures,
+  signals,
 }: {
   articleId: string;
   paragraphIndex: number;
   units: readonly ReadingLearningUnit[];
   exposedOccurrenceIds: Set<string>;
   recordExposures: MemoryBatchRecorder;
+  signals?: MemoryExposureSignals;
 }): Promise<void> {
-  const pending: Array<{ wordId: string; articleId: string; occurrenceId: string }> = [];
+  const pending: Array<{
+    wordId: string;
+    articleId: string;
+    occurrenceId: string;
+  } & MemoryExposureSignals> = [];
 
   for (const unit of units) {
     const occurrenceId = createMemoryOccurrenceId(articleId, paragraphIndex, unit);
     if (exposedOccurrenceIds.has(occurrenceId)) continue;
     exposedOccurrenceIds.add(occurrenceId);
-    pending.push({ wordId: unit.wordId, articleId, occurrenceId });
+    pending.push({ wordId: unit.wordId, articleId, occurrenceId, ...signals });
   }
 
   if (pending.length === 0) return;
@@ -115,7 +129,10 @@ export async function recordParagraphExposureWithRollback({
  * stream, callers pass the real `articleId` for each paragraph/click so later
  * articles still write Memory V2 evidence.
  */
-export function useMemoryV2Integration(streamKey: string) {
+export function useMemoryV2Integration(
+  streamKey: string,
+  defaults: MemoryExposureSignals = {},
+) {
   const {
     recordExposure,
     recordExposures,
@@ -154,6 +171,7 @@ export function useMemoryV2Integration(streamKey: string) {
       paragraphIndex: number,
       units: readonly ReadingLearningUnit[],
       articleId: string = streamKey,
+      signals: MemoryExposureSignals = {},
     ) => {
       try {
         await recordParagraphExposureWithRollback({
@@ -162,6 +180,7 @@ export function useMemoryV2Integration(streamKey: string) {
           units,
           exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
           recordExposures,
+          signals: { ...defaults, ...signals },
         });
         // Real Memory V2 write succeeded → notify vocab particle view
         const words = await snapshotWords(units.map((unit) => unit.wordId));
@@ -170,7 +189,7 @@ export function useMemoryV2Integration(streamKey: string) {
         console.error('Failed to record paragraph exposures:', error);
       }
     },
-    [streamKey, recordExposures, snapshotWords],
+    [streamKey, defaults, recordExposures, snapshotWords],
   );
 
   const recordWordClick = useCallback(
@@ -178,6 +197,7 @@ export function useMemoryV2Integration(streamKey: string) {
       unit: ReadingLearningUnit,
       paragraphIndex: number,
       articleId: string = streamKey,
+      signals: MemoryExposureSignals = {},
     ) => {
       try {
         await recordMemoryClickWithExposure({
@@ -187,6 +207,7 @@ export function useMemoryV2Integration(streamKey: string) {
           exposedOccurrenceIds: exposureStateRef.current.occurrenceIds,
           recordExposure,
           recordClick,
+          signals: { ...defaults, ...signals },
         });
         const [word] = await snapshotWords([unit.wordId]);
         if (word) {
@@ -196,7 +217,7 @@ export function useMemoryV2Integration(streamKey: string) {
         console.error('Failed to record click for', unit.wordId, error);
       }
     },
-    [streamKey, recordClick, recordExposure, snapshotWords],
+    [streamKey, defaults, recordClick, recordExposure, snapshotWords],
   );
 
   return {

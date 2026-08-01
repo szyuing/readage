@@ -72,9 +72,11 @@ import {
 } from './components/ReadingAssessmentScreen';
 import {
   buildCefrRecommendationProfile,
+  suggestedWordCountRange,
   normalizeUserReadingAssessment,
   resolveUserCefrLevel,
 } from './lib/userReadingProfile';
+import { buildDefaultV5Profile } from './lib/recommendationV5';
 import {
   buildAppPath,
   parseAppPath,
@@ -917,6 +919,7 @@ export default function App() {
       history
     );
     recommendationLibraryRef.current = library;
+    const targetWordCount = suggestedWordCountRange(userCefrLevel);
 
     let lastTiming: {
       catalogLoadMs?: number;
@@ -933,6 +936,16 @@ export default function App() {
         history,
         userLevel: userCefrLevel,
         cefrProfile: cefrRecommendationProfile,
+        v5Profile: buildDefaultV5Profile({
+          userLevel: userCefrLevel,
+          goal: 'general',
+          topic: request.topic,
+          recentTopics: history.slice(-6).map((article) => article.topic),
+          targetWordCount: {
+            min: targetWordCount.min,
+            max: targetWordCount.max,
+          },
+        }),
         useFullCatalog: true,
         onPhase: (phase) => {
           setRecommendPhase(phase === 'ai' ? 'ai' : 'local');
@@ -1288,7 +1301,7 @@ export default function App() {
           [
             { id: 'library' as const, label: 'Library', icon: Library },
             { id: 'reading' as const, label: '阅读', icon: BookOpen },
-            { id: 'learning' as const, label: '学习', icon: BarChart3 },
+            { id: 'learning' as const, label: '数据', icon: BarChart3 },
             { id: 'history' as const, label: '历史', icon: History },
           ] as const
         ).map(({ id, label, icon: Icon }) => {

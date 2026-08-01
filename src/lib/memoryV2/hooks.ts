@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { WordProficiencyView } from './memorySystem';
+import type { MemoryExposureSignals } from './types';
 import { useMemoryStore } from './MemoryProvider';
 import {
   getDefaultMemoryStore,
@@ -62,13 +63,17 @@ export function useMemorySystem() {
   }, [store]);
 
   const recordExposure = useCallback(
-    (wordId: string, articleId: string, occurrenceId: string) =>
-      store.recordExposure(wordId, articleId, occurrenceId),
+    (wordId: string, articleId: string, occurrenceId: string, signals?: MemoryExposureSignals) =>
+      store.recordExposure(wordId, articleId, occurrenceId, signals),
     [store]
   );
 
   const recordExposures = useCallback(
-    (items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>) =>
+    (items: ReadonlyArray<{
+      wordId: string;
+      articleId: string;
+      occurrenceId: string;
+    } & MemoryExposureSignals>) =>
       store.recordExposures(items),
     [store]
   );

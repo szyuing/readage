@@ -30,6 +30,8 @@ import {
   scoreToLevel,
   scoreToLevelWithHysteresis,
 } from './memoryScore';
+import { prepareRmeEvent, projectRmeProfile, rmeProfileForState } from './rmeV4Bridge';
+import { stageFromConfidence } from '../memoryV4';
 
 export interface WordProficiencyView {
   wordId: string;
@@ -39,6 +41,23 @@ export interface WordProficiencyView {
   difficulty: number;
   nextReview: string;
   lastReview: string | null;
+  confidence?: number;
+  opportunityScore?: number;
+  memoryStage?: 0 | 1 | 2 | 3 | 4;
+}
+
+function addRmeProjection(
+  state: WordMemoryState,
+  view: WordProficiencyView,
+  now: Date,
+): WordProficiencyView {
+  const projected = projectRmeProfile(rmeProfileForState(state), state, now);
+  return {
+    ...view,
+    confidence: projected.confidence,
+    opportunityScore: projected.opportunityScore,
+    memoryStage: stageFromConfidence(projected.confidence),
+  };
 }
 
 export class MemorySystemV2 {
@@ -53,9 +72,12 @@ export class MemorySystemV2 {
    */
   async recordEvent(event: RawWordEvent): Promise<void> {
     const { userId, wordId, articleId, localDate } = event;
+    const currentState = await this.storage.getMemoryState(userId, wordId);
+    const prepared = prepareRmeEvent(currentState, event);
+    const normalizedEvent = prepared.event;
 
     // 1. 保存原始事件
-    await this.storage.saveRawEvent(event);
+    await this.storage.saveRawEvent(normalizedEvent);
 
     // 2. 获取当天该单词在该文章中的所有事件
     const articleEvents = await this.storage.getRawEventsByDate(userId, wordId, localDate);
@@ -88,6 +110,10 @@ export class MemorySystemV2 {
     if (dailyEvidence) {
       await this.storage.saveDailyEvidence(dailyEvidence);
     }
+
+    if (prepared.state) {
+      await this.storage.saveMemoryState(prepared.state);
+    }
   }
 
   /**
@@ -96,8 +122,24 @@ export class MemorySystemV2 {
   async recordBatchEvents(events: RawWordEvent[]): Promise<void> {
     if (events.length === 0) return;
 
+    const preparedEvents: RawWordEvent[] = [];
+    const preparedStates = new Map<string, WordMemoryState | null>();
+    for (const event of events) {
+      const key = `${event.userId}:${event.wordId}`;
+      const current = preparedStates.has(key)
+        ? preparedStates.get(key) || null
+        : await this.storage.getMemoryState(event.userId, event.wordId);
+      const prepared = prepareRmeEvent(current, event);
+      preparedEvents.push(prepared.event);
+      preparedStates.set(key, prepared.state);
+    }
+
     // 1. Persist the raw batch before rebuilding derived evidence.
-    await this.storage.saveRawEvents(events);
+    await this.storage.saveRawEvents(preparedEvents);
+
+    for (const state of preparedStates.values()) {
+      if (state) await this.storage.saveMemoryState(state);
+    }
 
     // 2. Collect each affected user + word + date combination.
     const affectedWordDates = new Map<string, RawWordEvent>();
@@ -206,7 +248,7 @@ export class MemorySystemV2 {
     const memoryScore = calculateMemoryScore(memoryState, this.params, currentTime);
     const level = scoreToLevel(memoryScore);
 
-    return {
+    return addRmeProjection(memoryState, {
       wordId,
       memoryScore,
       level,
@@ -214,7 +256,7 @@ export class MemorySystemV2 {
       difficulty: memoryState.difficulty,
       nextReview: memoryState.nextReview,
       lastReview: memoryState.lastReview,
-    };
+    }, currentTime);
   }
 
   /**
@@ -238,7 +280,7 @@ export class MemorySystemV2 {
       const memoryScore = scores.get(wordId) || 0;
       const level = scoreToLevel(memoryScore);
 
-      proficiencies.set(wordId, {
+      proficiencies.set(wordId, addRmeProjection(memoryState, {
         wordId,
         memoryScore,
         level,
@@ -246,7 +288,7 @@ export class MemorySystemV2 {
         difficulty: memoryState.difficulty,
         nextReview: memoryState.nextReview,
         lastReview: memoryState.lastReview,
-      });
+      }, currentTime));
     }
 
     return proficiencies;
@@ -266,7 +308,7 @@ export class MemorySystemV2 {
       const memoryScore = scores.get(state.wordId) || 0;
       const level = scoreToLevel(memoryScore);
 
-      return {
+      return addRmeProjection(state, {
         wordId: state.wordId,
         memoryScore,
         level,
@@ -274,7 +316,7 @@ export class MemorySystemV2 {
         difficulty: state.difficulty,
         nextReview: state.nextReview,
         lastReview: state.lastReview,
-      };
+      }, currentTime);
     });
   }
 

@@ -53,13 +53,15 @@ let recommendationNavigationHintShown = false;
 
 const REWRITE_CEFR_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const;
 
-function getArticleHighlightTerms(readingArticle?: Article): string[] {
-  if (!readingArticle) return [];
+export function getArticleHighlightTerms(readingArticle?: Article): string[] {
+  if (
+    !readingArticle
+    || readingArticle.source === 'level_rewrite'
+    || readingArticle.generationKind === 'level-rewrite'
+  ) return [];
   return [
     ...(readingArticle.keyWords || []),
-    ...(readingArticle.source === 'level_rewrite'
-      ? []
-      : (readingArticle.embeddedReviewWords || [])),
+    ...(readingArticle.embeddedReviewWords || []),
   ];
 }
 
@@ -147,7 +149,10 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
   const [showNavigationHint, setShowNavigationHint] = useState(false);
 
   // Memory V2.2 集成
-  const { recordParagraphExposure, recordWordClick, snapshotWords } = useMemoryV2Integration(article.id);
+  const { recordParagraphExposure, recordWordClick, snapshotWords } = useMemoryV2Integration(
+    article.id,
+    { isRecommendation: mode === 'recommendation-feed' },
+  );
   const snapshotWordsRef = useRef(snapshotWords);
   useEffect(() => {
     snapshotWordsRef.current = snapshotWords;
@@ -339,7 +344,12 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
 
             // Memory V2.2: record for every article in the continuous stream
             if (learningUnits.length > 0) {
-              recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId).catch(err =>
+              const wordCount = paragraphText.trim().split(/\s+/).filter(Boolean).length;
+              recordParagraphExposure(paragraphIndex, learningUnits, paragraphArticleId, {
+                contextText: paragraphText.slice(0, 2_000),
+                dwellTimeMs: 800,
+                expectedDwellTimeMs: Math.max(300, wordCount * 300),
+              }).catch(err =>
                 console.error('Memory V2.2 exposure recording failed:', err)
               );
             }
@@ -575,7 +585,9 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
     if (paragraphElement && learningUnit) {
       const paragraphIndex = Number(paragraphElement.getAttribute('data-reading-paragraph'));
 
-      recordWordClick(learningUnit, paragraphIndex, readingArticle.id).catch(err =>
+      recordWordClick(learningUnit, paragraphIndex, readingArticle.id, {
+        contextText: paragraph.slice(0, 2_000),
+      }).catch(err =>
         console.error('Memory V2.2 click recording failed:', err)
       );
     }
@@ -1135,7 +1147,8 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
           )}
         </header>
 
-        {(article.parentArticleId || article.source === 'level_rewrite') && (
+        {/* Legacy rewrite banner is intentionally suppressed: rewrites are ordinary new articles. */}
+        {false && (
           <div className="mb-4 p-3 bg-[#FDF2F8] border border-[#FBCFE8] rounded-xl text-xs text-[#9D174D] flex items-start justify-between gap-3">
             <div>
               <p className="font-semibold">
@@ -1506,8 +1519,14 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
         document.body,
       )}
 
-      {showChatPanel && !isComposerExpanded && (
-        <div data-reading-interaction="true" className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-40 flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96">
+      {/* Discussion UI is portaled to document.body so reading-root transform/opacity
+          cannot clip or scroll it off-screen (fixed descendants of transformed
+          ancestors are positioned against that ancestor, not the viewport). */}
+      {showChatPanel && !isComposerExpanded && createPortal(
+        <div
+          data-reading-interaction="true"
+          className="fixed inset-x-3 bottom-[max(5.5rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] z-[70] flex max-h-[min(50dvh,24rem)] flex-col rounded-2xl border border-[#E0DBCF] bg-[#FAF8F3] p-4 shadow-2xl sm:inset-x-auto sm:bottom-24 sm:right-8 sm:left-auto sm:w-96 sm:max-h-96"
+        >
           <div className="flex items-center justify-between border-b border-[#E8E2D5] pb-2 mb-3">
             <div className="min-w-0">
               <span className="font-serif font-semibold text-sm text-[#332E28] flex items-center gap-1.5">
@@ -1546,120 +1565,122 @@ export const ReadingScreen: React.FC<ReadingScreenProps> = ({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {isComposerExpanded ? (
-        <footer
-          data-reading-interaction="true"
-          className="fixed inset-x-0 bottom-0 z-40 sm:inset-x-auto sm:bottom-auto sm:right-8 sm:top-1/2 sm:w-[min(28rem,calc(100vw-2rem))] sm:-translate-y-1/2"
-          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-        >
-          <div className="flex max-h-[min(70dvh,34rem)] flex-col gap-1.5 overflow-hidden rounded-t-2xl border border-[#DDD6C8] border-b-0 bg-[#F8F6F0]/98 p-3 shadow-2xl backdrop-blur-md sm:max-h-[min(34rem,calc(100vh-2rem))] sm:rounded-2xl sm:border-b">
-          <div className="flex items-center justify-between gap-2 px-1 sm:hidden">
-            <span className="font-serif text-sm font-semibold text-[#332E28]">讨论区</span>
-            <button
-              type="button"
-              onClick={() => {
-                setIsComposerExpanded(false);
-                setShowChatPanel(false);
-              }}
-              className="tap-target inline-flex items-center justify-center rounded-full p-2 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
-              aria-label="Collapse article discussion input"
-              title="Collapse input"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          <div className="min-h-0 max-h-[40dvh] w-full space-y-3 overflow-y-auto p-1 text-sm sm:max-h-56 sm:text-xs overscroll-contain">
-            {chatMessages.length === 0 && !isSending && (
-              <p className="rounded-xl border border-dashed border-[#DDD6C8] bg-white/60 p-3 text-[#756D63]">
-                Start with a question about a sentence, idea, or vocabulary in this article.
-              </p>
-            )}
-            {chatMessages.map((msg, idx) => (
-              <div
-                key={msg.id ?? idx}
-                className={`max-w-[85%] rounded-xl p-3 break-words ${
-                  msg.sender === 'user'
-                    ? 'ml-auto bg-[#C35E37] text-white'
-                    : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
-                }`}
-              >
-                {msg.text}
-              </div>
-            ))}
-            {isSending && (
-              <div className="mr-auto animate-pulse rounded-xl bg-[#EFECE3] p-3 text-[#6C655C]">
-                Thinking...
-              </div>
-            )}
-          </div>
-          <form
-            onSubmit={handleSendQuestion}
-            className="flex w-full shrink-0 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2.5 sm:py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
-            aria-label="Article discussion"
+      {isComposerExpanded
+        ? createPortal(
+          <footer
+            data-reading-interaction="true"
+            className="fixed inset-x-0 bottom-0 z-[70] sm:inset-x-auto sm:bottom-auto sm:right-8 sm:top-1/2 sm:w-[min(28rem,calc(100vw-2rem))] sm:-translate-y-1/2"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
           >
-            <input
-              type="text"
-              ref={composerInputRef}
-              id="reading-composer-input"
-              value={userInput}
-              onChange={(e) => setUserInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
+            <div className="flex max-h-[min(70dvh,34rem)] flex-col gap-1.5 overflow-hidden rounded-t-2xl border border-[#DDD6C8] border-b-0 bg-[#F8F6F0]/98 p-3 shadow-2xl backdrop-blur-md sm:max-h-[min(34rem,calc(100vh-2rem))] sm:rounded-2xl sm:border-b">
+              <div className="flex items-center justify-between gap-2 px-1 sm:hidden">
+                <span className="font-serif text-sm font-semibold text-[#332E28]">讨论区</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsComposerExpanded(false);
+                    setShowChatPanel(false);
+                  }}
+                  className="tap-target inline-flex items-center justify-center rounded-full p-2 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+                  aria-label="Collapse article discussion input"
+                  title="Collapse input"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="min-h-0 max-h-[40dvh] w-full space-y-3 overflow-y-auto p-1 text-sm sm:max-h-56 sm:text-xs overscroll-contain">
+                {chatMessages.length === 0 && !isSending && (
+                  <p className="rounded-xl border border-dashed border-[#DDD6C8] bg-white/60 p-3 text-[#756D63]">
+                    Start with a question about a sentence, idea, or vocabulary in this article.
+                  </p>
+                )}
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={msg.id ?? idx}
+                    className={`max-w-[85%] rounded-xl p-3 break-words ${
+                      msg.sender === 'user'
+                        ? 'ml-auto bg-[#C35E37] text-white'
+                        : 'mr-auto border border-[#E2DDD0] bg-[#EFECE3] text-[#2C2722]'
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                ))}
+                {isSending && (
+                  <div className="mr-auto animate-pulse rounded-xl bg-[#EFECE3] p-3 text-[#6C655C]">
+                    Thinking...
+                  </div>
+                )}
+              </div>
+              <form
+                onSubmit={handleSendQuestion}
+                className="flex w-full shrink-0 items-center rounded-full border border-[#DDD6C8] bg-white px-3 py-2.5 sm:py-2 shadow-2xs transition-all focus-within:border-[#C35E37]"
+                aria-label="Article discussion"
+              >
+                <input
+                  type="text"
+                  ref={composerInputRef}
+                  id="reading-composer-input"
+                  value={userInput}
+                  onChange={(e) => setUserInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setIsComposerExpanded(false);
+                      setShowChatPanel(false);
+                    }
+                  }}
+                  placeholder="问大意、难句，或谈谈你的观点…"
+                  aria-label="Ask about this article"
+                  enterKeyHint="send"
+                  autoComplete="off"
+                  className="min-w-0 flex-1 bg-transparent text-base sm:text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={!userInput.trim() || isSending}
+                  className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#C35E37] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
+                  aria-label="Send question"
+                >
+                  <Send className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                </button>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => {
                   setIsComposerExpanded(false);
                   setShowChatPanel(false);
-                }
-              }}
-              placeholder="问大意、难句，或谈谈你的观点…"
-              aria-label="Ask about this article"
-              enterKeyHint="send"
-              autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent text-base sm:text-sm text-[#2B2723] placeholder-[#9A9185] outline-none"
-            />
-            <button
-              type="submit"
-              disabled={!userInput.trim() || isSending}
-              className="ml-2 tap-target inline-flex shrink-0 items-center justify-center rounded-full bg-[#C35E37] p-2.5 sm:p-1.5 text-white transition-colors hover:bg-[#A94E2B] disabled:opacity-40"
-              aria-label="Send question"
-            >
-              <Send className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-            </button>
-          </form>
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsComposerExpanded(false);
-              setShowChatPanel(false);
-            }}
-            className="hidden sm:inline-flex shrink-0 self-end rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
-            aria-label="Collapse article discussion input"
-            title="Collapse input"
-          >
-            <X className="h-5 w-5" />
-          </button>
-
-        </div>
-      </footer>
-      ) : (
-        createPortal(
+                }}
+                className="hidden sm:inline-flex shrink-0 self-end rounded-full p-2.5 text-[#5B544B] transition-colors hover:bg-[#EFEAE0]"
+                aria-label="Collapse article discussion input"
+                title="Collapse input"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </footer>,
+          document.body,
+        )
+        : createPortal(
           <button
             type="button"
             data-reading-interaction="true"
             onClick={() => setIsComposerExpanded(true)}
-            className="fixed z-40 rounded-full border border-[#D8D1C3] bg-[#FAF8F3] p-3.5 sm:p-4 text-[#C35E37] shadow-xl transition-all hover:scale-105 hover:bg-white hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
+            className="fixed z-[70] inline-flex items-center gap-2 rounded-full border border-[#C35E37] bg-[#C35E37] px-4 py-3.5 sm:px-5 sm:py-3.5 text-white shadow-xl transition-all hover:scale-105 hover:bg-[#A94E2B] hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-[#C35E37] focus:ring-offset-2 right-[max(1rem,env(safe-area-inset-right,0px))] bottom-[max(1.25rem,calc(1rem+env(safe-area-inset-bottom,0px)))] sm:right-8"
             aria-label="Open article discussion input"
             aria-expanded={false}
             aria-controls="reading-composer-input"
-            title="Ask about this article"
+            title="讨论：就文章提问"
           >
-            <MessageCircle className="h-6 w-6" />
+            <MessageCircle className="h-6 w-6 shrink-0" />
+            <span className="text-sm font-semibold tracking-wide">讨论</span>
           </button>,
           document.body,
-        )
-      )}
+        )}
     </div>
   );
 };

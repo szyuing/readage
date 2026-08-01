@@ -7,7 +7,7 @@ import { MemorySystemV2 } from './memorySystem';
 import { LocalStorageMemoryStorage } from './localStorageImpl';
 import { createPreferredMemoryStorage } from './indexedDbImpl';
 import type { MemoryStorage } from './storage';
-import type { RawWordEvent } from './types';
+import type { MemoryExposureSignals, RawWordEvent } from './types';
 import {
   getLocalDateInTimeZone,
   getSystemTimeZone,
@@ -211,7 +211,8 @@ export class MemoryV2Store {
   async recordExposure(
     wordId: string,
     articleId: string,
-    occurrenceId: string
+    occurrenceId: string,
+    signals: MemoryExposureSignals = {},
   ): Promise<void> {
     await this.recordEvent({
       userId: this.userId,
@@ -221,13 +222,14 @@ export class MemoryV2Store {
       eventType: 'exposure',
       occurredAt: this.now().toISOString(),
       localDate: this.getLocalDate(),
+      ...signals,
     });
   }
 
   async recordClick(
     wordId: string,
     articleId: string,
-    occurrenceId: string
+    occurrenceId: string,
   ): Promise<void> {
     await this.recordEvent({
       userId: this.userId,
@@ -242,7 +244,11 @@ export class MemoryV2Store {
 
   /** Batch-record paragraph exposures to cut per-word storage round-trips. */
   async recordExposures(
-    items: ReadonlyArray<{ wordId: string; articleId: string; occurrenceId: string }>
+    items: ReadonlyArray<{
+      wordId: string;
+      articleId: string;
+      occurrenceId: string;
+    } & MemoryExposureSignals>
   ): Promise<void> {
     if (items.length === 0) return;
     const localDate = this.getLocalDate();
@@ -255,6 +261,7 @@ export class MemoryV2Store {
       eventType: 'exposure' as const,
       occurredAt,
       localDate,
+      ...item,
     }));
 
     try {

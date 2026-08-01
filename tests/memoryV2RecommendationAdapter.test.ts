@@ -66,6 +66,26 @@ afterEach(() => {
 });
 
 describe('MemoryV2RecommendationAdapter targeted review', () => {
+  it('prioritizes unique Opportunity Coverage without bypassing candidate filters', async () => {
+    installMemorySystemStub({
+      dueWords: [],
+      allProficiency: [
+        { ...proficiency('urgent'), opportunityScore: 90 },
+        { ...proficiency('steady'), opportunityScore: 30 },
+      ],
+    });
+
+    const ranked = await createMemoryV2Adapter().recommendCandidates(
+      [
+        { article: article('repeat-one', 'urgent'), lemmas: ['urgent', 'urgent', 'urgent'] },
+        { article: article('broad-coverage', 'urgent'), lemmas: ['urgent', 'steady'] },
+      ],
+      { limit: 2, applyHardFilters: false },
+    );
+
+    assert.deepEqual(ranked.map((item) => item.articleId), ['broad-coverage', 'repeat-one']);
+  });
+
   it('uses the assessed CEFR profile for local ranking', async () => {
     installMemorySystemStub({ dueWords: [], allProficiency: [] });
 
@@ -89,6 +109,32 @@ describe('MemoryV2RecommendationAdapter targeted review', () => {
     );
 
     assert.equal(selected?.id, 'b2-article');
+  });
+
+  it('enables V5 multi-objective ranking only when a V5 profile is supplied', async () => {
+    installMemorySystemStub({
+      dueWords: [],
+      allProficiency: [{ ...proficiency('urgent'), opportunityScore: 40 }],
+    });
+
+    const ranked = await createMemoryV2Adapter({
+      v5Profile: {
+        userLevel: 'B1',
+        goal: 'ielts',
+        preferredTopics: ['environment'],
+      },
+    }).recommendCandidates([
+      {
+        article: { ...article('memory', 'urgent'), topic: 'finance' },
+        lemmas: ['urgent'],
+      },
+      {
+        article: { ...article('interest', 'other'), topic: 'environment' },
+        lemmas: ['other'],
+      },
+    ], { limit: 2, applyHardFilters: false });
+
+    assert.equal(ranked[0]?.articleId, 'interest');
   });
 
   it('uses unique review hits in the full catalog path', async () => {

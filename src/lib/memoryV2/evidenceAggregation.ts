@@ -22,11 +22,17 @@ export function aggregateArticleEvidence(
 ): ArticleWordEvidence | null {
   if (events.length === 0) return null;
 
-  const exposureEvents = events.filter((e) => e.eventType === 'exposure');
+  // V4 first exposures and sub-24h natural repeats remain history only.
+  const exposureEvents = events.filter(
+    (e) => e.eventType === 'exposure' && e.rmeIsValid !== false,
+  );
   const clickEvents = events.filter((e) => e.eventType === 'click');
 
   // 统计有效曝光次数
   const validExposureCount = exposureEvents.length;
+  const averageRmeQuality = exposureEvents.some((event) => typeof event.rmeQuality === 'number')
+    ? exposureEvents.reduce((sum, event) => sum + (event.rmeQuality ?? 1), 0) / exposureEvents.length
+    : undefined;
 
   // 统计被点击的 occurrence 数量（去重）
   const clickedOccurrences = new Set(
@@ -48,6 +54,7 @@ export function aggregateArticleEvidence(
     clickedOccurrenceCount,
     firstSeenAt: sortedEvents[0].occurredAt,
     lastSeenAt: sortedEvents[sortedEvents.length - 1].occurredAt,
+    ...(averageRmeQuality === undefined ? {} : { averageRmeQuality }),
   };
 }
 
@@ -91,10 +98,16 @@ export function aggregateDailyEvidence(
   // 统计总曝光和点击
   let totalExposures = 0;
   let totalClicks = 0;
+  let qualityWeightedTotal = 0;
+  let qualityWeightedCount = 0;
 
   for (const evidence of articleEvidences) {
     totalExposures += evidence.validExposureCount;
     totalClicks += evidence.clickedOccurrenceCount;
+    if (evidence.averageRmeQuality !== undefined && evidence.validExposureCount > 0) {
+      qualityWeightedTotal += evidence.averageRmeQuality * evidence.validExposureCount;
+      qualityWeightedCount += evidence.validExposureCount;
+    }
   }
 
   // 计算当天的待定评级
@@ -109,6 +122,9 @@ export function aggregateDailyEvidence(
     validExposureCount: totalExposures,
     clickedOccurrenceCount: totalClicks,
     pendingGrade,
+    ...(qualityWeightedCount > 0
+      ? { averageRmeQuality: qualityWeightedTotal / qualityWeightedCount }
+      : {}),
     finalizedAt: null, // 未结算
   };
 }
@@ -181,6 +197,14 @@ export function updateDailyEvidence(
     (sum, e) => sum + e.clickedOccurrenceCount,
     0
   );
+  const qualityRows = updatedArticleEvidence.filter(
+    (e) => e.averageRmeQuality !== undefined && e.validExposureCount > 0,
+  );
+  const qualityWeightedCount = qualityRows.reduce((sum, e) => sum + e.validExposureCount, 0);
+  const averageRmeQuality = qualityWeightedCount > 0
+    ? qualityRows.reduce((sum, e) => sum + (e.averageRmeQuality! * e.validExposureCount), 0)
+      / qualityWeightedCount
+    : undefined;
 
   // 重新计算待定评级
   const pendingGrade = calculateDailyGrade(updatedArticleEvidence);
@@ -192,6 +216,7 @@ export function updateDailyEvidence(
     validExposureCount: totalExposures,
     clickedOccurrenceCount: totalClicks,
     pendingGrade,
+    ...(averageRmeQuality === undefined ? {} : { averageRmeQuality }),
     finalizedAt: null,
   };
 }

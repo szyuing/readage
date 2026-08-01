@@ -31,6 +31,7 @@ import {
 } from './recommendationPoolRotation';
 import { postTutor, type TutorPostOptions } from './tutorClient';
 import type { ArticleCandidate, RecommendationScore } from './memoryV2/recommendation';
+import type { V5RecommendationProfile } from './recommendationV5';
 import {
   emitRecCandidates,
   emitRecCatalogLoaded,
@@ -61,6 +62,8 @@ export interface ResolveRecommendationContext {
   history: Article[];
   userLevel?: string;
   cefrProfile?: CefrRecommendationProfile;
+  /** Optional V5 multi-objective profile for the next-article ranking layer. */
+  v5Profile?: V5RecommendationProfile;
   memoryOptions?: MemoryV2RecommendationOptions;
   /** Optional UI progress hook. */
   onPhase?: (phase: 'local' | 'library' | 'ai' | 'catalog') => void;
@@ -165,6 +168,7 @@ async function resolveFromFullCatalog(
     history,
     userLevel = 'B1',
     cefrProfile,
+    v5Profile,
     memoryOptions,
     onPhase,
     loadLemmaIndex,
@@ -181,6 +185,7 @@ async function resolveFromFullCatalog(
     ...memoryOptions,
     userLevel: profile.userLevel,
     cefrProfile: profile,
+    v5Profile: v5Profile ?? memoryOptions?.v5Profile,
   };
 
   onPhase?.('catalog');
@@ -326,6 +331,7 @@ export async function resolveRecommendationArticle(
     history,
     userLevel = 'B1',
     cefrProfile,
+    v5Profile,
     memoryOptions,
     onPhase,
     localProvider = memoryV2RecommendationProvider,
@@ -344,6 +350,7 @@ export async function resolveRecommendationArticle(
     ...memoryOptions,
     userLevel: profile.userLevel,
     cefrProfile: profile,
+    v5Profile: v5Profile ?? memoryOptions?.v5Profile,
   };
   const { topic, reviewWords, excludeArticleIds } = request;
   // Never re-recommend pieces the user already opened (history) or saw in this feed.

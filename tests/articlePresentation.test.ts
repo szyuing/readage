@@ -51,6 +51,21 @@ test('classifies webpage navigation and separator lines as import furniture', ()
     'furniture'
   );
   assert.equal(classifyArticleParagraph('------------------------------', 'An article title'), 'furniture');
+  assert.equal(
+    classifyArticleParagraph('Read: The disturbing history of the Bracero Program', 'An article title'),
+    'furniture'
+  );
+  assert.equal(
+    classifyArticleParagraph(
+      'This article was downloaded by calibre from https://www.theatlantic.com/magazine/2026/04/example/1/',
+      'An article title'
+    ),
+    'furniture'
+  );
+  assert.equal(
+    classifyArticleParagraph('This poem appears in the August 2026 print edition.', 'A poem'),
+    'furniture'
+  );
 });
 
 test('keeps normal article paragraphs in the reading flow', () => {

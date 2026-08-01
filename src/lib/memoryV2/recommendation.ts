@@ -51,6 +51,8 @@ export interface RecommendationScore {
   /** CEFR contribution, exposed for diagnostics and tie-break tests. */
   cefrScore?: number;
   cefrRelation?: CefrRelation;
+  /** RME-V4 unique-word opportunity coverage contribution. */
+  opportunityCoverage?: number;
 }
 
 export interface RecommendationParams {

@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { convert as htmlToText } from 'html-to-text';
+import { classifyArticleParagraph } from '../../src/lib/articlePresentation';
 
 export interface ParsedChapter {
   title: string;
@@ -10,6 +11,8 @@ export interface ParsedChapter {
 const MIN_WORDS = 80;
 const SKIP_TITLE_RE =
   /^(cover|contents|table of contents|copyright|title page|masthead|colophon|advertisement|subscribe|credits|index)$/i;
+const CALIBRE_ARTICLE_MARKER_RE =
+  /This article was downloaded by calibre from[\s\S]*?(?:<\/(?:p|div|section|footer)>|\n)/gi;
 
 function textWordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -32,27 +35,80 @@ function paragraphsFromText(text: string): string[] {
   return text
     .replace(/\r\n/g, '\n')
     .split(/\n{2,}/)
-    .map((p) => p.replace(/\s+/g, ' ').trim())
-    .filter((p) => p.length > 0);
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter((paragraph) => paragraph.length > 0);
+}
+
+function cleanArticleParagraphs(paragraphs: string[]): string[] {
+  return paragraphs.filter((paragraph) => classifyArticleParagraph(paragraph, '') !== 'furniture');
+}
+
+function splitHtmlDocuments(html: string): string[] {
+  const semanticArticles = [...html.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/gi)].map(
+    (match) => match[0]
+  );
+  if (semanticArticles.length > 0) return semanticArticles;
+
+  // Calibre sometimes concatenates article pages without semantic article tags.
+  // Its download attribution is a stable end marker for each article in that form.
+  const markers = [...html.matchAll(CALIBRE_ARTICLE_MARKER_RE)];
+  if (markers.length > 1) {
+    const documents: string[] = [];
+    let start = 0;
+    for (const marker of markers) {
+      const end = (marker.index ?? 0) + marker[0].length;
+      documents.push(html.slice(start, end));
+      start = end;
+    }
+    if (start < html.length) documents.push(html.slice(start));
+    return documents.filter((document) => /[A-Za-z]/.test(document));
+  }
+
+  return [html];
+}
+
+function textFromHtmlFragment(fragment: string): string {
+  return htmlToText(fragment, { wordwrap: false })
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function extractTitle(html: string, fallback: string): string {
   const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
   if (h1) {
-    const t = stripHtml(h1[1]).trim();
-    if (t) return t.slice(0, 200);
+    const title = textFromHtmlFragment(h1[1]);
+    if (title) return title.slice(0, 200);
   }
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   if (titleTag) {
-    const t = stripHtml(titleTag[1]).trim();
-    if (t && !/\.x?html?$/i.test(t)) return t.slice(0, 200);
+    const title = textFromHtmlFragment(titleTag[1]);
+    if (title && !/\.x?html?$/i.test(title)) return title.slice(0, 200);
   }
   const h2 = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
   if (h2) {
-    const t = stripHtml(h2[1]).trim();
-    if (t) return t.slice(0, 200);
+    const title = textFromHtmlFragment(h2[1]);
+    if (title) return title.slice(0, 200);
   }
   return fallback;
+}
+
+function parseHtmlDocument(html: string, fallbackTitle: string): ParsedChapter | null {
+  const title = extractTitle(html, fallbackTitle);
+  if (SKIP_TITLE_RE.test(title.trim())) return null;
+
+  const rawParagraphs = paragraphsFromText(stripHtml(html));
+  const paragraphs = cleanArticleParagraphs(rawParagraphs);
+  const sourceWordCount = textWordCount(rawParagraphs.join(' '));
+  const wordCount = textWordCount(paragraphs.join(' '));
+  if (sourceWordCount < MIN_WORDS || wordCount === 0) return null;
+
+  let chapterTitle = title;
+  if (paragraphs[0] && chapterTitle.length > 120) {
+    chapterTitle = paragraphs[0].slice(0, 80) + (paragraphs[0].length > 80 ? '...' : '');
+  }
+
+  return { title: chapterTitle, paragraphs, wordCount };
 }
 
 function resolvePath(baseDir: string, relative: string): string {
@@ -60,23 +116,24 @@ function resolvePath(baseDir: string, relative: string): string {
   if (!baseDir) return clean;
   const parts = [...baseDir.split('/').filter(Boolean), ...clean.split('/')];
   const stack: string[] = [];
-  for (const p of parts) {
-    if (p === '..') stack.pop();
-    else if (p !== '.') stack.push(p);
+  for (const part of parts) {
+    if (part === '..') stack.pop();
+    else if (part !== '.') stack.push(part);
   }
   return stack.join('/');
 }
 
 function parseXmlAttr(tag: string, attr: string): string | null {
   const re = new RegExp(`${attr}\\s*=\\s*["']([^"']+)["']`, 'i');
-  const m = tag.match(re);
-  return m ? m[1] : null;
+  const match = tag.match(re);
+  return match ? match[1] : null;
 }
 
-async function readZipText(zip: JSZip, path: string): Promise<string | null> {
-  // case-insensitive path match
-  const lower = path.toLowerCase();
-  const key = Object.keys(zip.files).find((k) => k.replace(/\\/g, '/').toLowerCase() === lower);
+async function readZipText(zip: JSZip, filePath: string): Promise<string | null> {
+  const lower = filePath.toLowerCase();
+  const key = Object.keys(zip.files).find((candidate) =>
+    candidate.replace(/\\/g, '/').toLowerCase() === lower
+  );
   if (!key) return null;
   return zip.files[key].async('text');
 }
@@ -93,21 +150,15 @@ export async function parseEpubBuffer(buffer: Buffer): Promise<ParsedChapter[]> 
   const opf = await readZipText(zip, opfPath);
   if (!opf) throw new Error(`Invalid EPUB: missing OPF ${opfPath}`);
 
-  // id -> href map from manifest
   const idToHref = new Map<string, string>();
-  const itemRe = /<item\b[^>]*>/gi;
-  let itemMatch: RegExpExecArray | null;
-  while ((itemMatch = itemRe.exec(opf))) {
-    const tag = itemMatch[0];
-    const id = parseXmlAttr(tag, 'id');
-    const href = parseXmlAttr(tag, 'href');
+  for (const itemMatch of opf.matchAll(/<item\b[^>]*>/gi)) {
+    const id = parseXmlAttr(itemMatch[0], 'id');
+    const href = parseXmlAttr(itemMatch[0], 'href');
     if (id && href) idToHref.set(id, href);
   }
 
   const spineIds: string[] = [];
-  const itemrefRe = /<itemref\b[^>]*>/gi;
-  let refMatch: RegExpExecArray | null;
-  while ((refMatch = itemrefRe.exec(opf))) {
+  for (const refMatch of opf.matchAll(/<itemref\b[^>]*>/gi)) {
     const idref = parseXmlAttr(refMatch[0], 'idref');
     if (idref) spineIds.push(idref);
   }
@@ -122,48 +173,24 @@ export async function parseEpubBuffer(buffer: Buffer): Promise<ParsedChapter[]> 
     const html = await readZipText(zip, fullPath);
     if (!html) continue;
 
-    const title = extractTitle(html, `Section ${index + 1}`);
-    if (SKIP_TITLE_RE.test(title.trim())) {
+    for (const document of splitHtmlDocuments(html)) {
+      const chapter = parseHtmlDocument(document, `Section ${index + 1}`);
+      if (chapter) chapters.push(chapter);
       index += 1;
-      continue;
     }
-
-    const text = stripHtml(html);
-    const paragraphs = paragraphsFromText(text);
-    const body = paragraphs.join(' ');
-    const wordCount = textWordCount(body);
-    if (wordCount < MIN_WORDS) {
-      index += 1;
-      continue;
-    }
-
-    // Prefer title not equal to entire first paragraph when first para is long
-    let chapterTitle = title;
-    if (paragraphs[0] && chapterTitle.length > 120) {
-      chapterTitle = paragraphs[0].slice(0, 80) + (paragraphs[0].length > 80 ? '…' : '');
-    }
-
-    chapters.push({
-      title: chapterTitle,
-      paragraphs,
-      wordCount,
-    });
-    index += 1;
   }
 
-  // Fallback: if spine produced nothing useful, dump all html files
+  // Fallback: if the spine produced nothing useful, inspect all HTML files.
   if (chapters.length === 0) {
-    const htmlFiles = Object.keys(zip.files).filter((k) => /\.(x?html?)$/i.test(k) && !zip.files[k].dir);
-    for (let i = 0; i < htmlFiles.length; i++) {
+    const htmlFiles = Object.keys(zip.files).filter(
+      (filePath) => /\.(x?html?)$/i.test(filePath) && !zip.files[filePath].dir
+    );
+    for (let i = 0; i < htmlFiles.length; i += 1) {
       const html = await zip.files[htmlFiles[i]].async('text');
-      const paragraphs = paragraphsFromText(stripHtml(html));
-      const wordCount = textWordCount(paragraphs.join(' '));
-      if (wordCount < MIN_WORDS) continue;
-      chapters.push({
-        title: extractTitle(html, `Part ${i + 1}`),
-        paragraphs,
-        wordCount,
-      });
+      for (const document of splitHtmlDocuments(html)) {
+        const chapter = parseHtmlDocument(document, `Part ${i + 1}`);
+        if (chapter) chapters.push(chapter);
+      }
     }
   }
 

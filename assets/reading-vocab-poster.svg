@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800" viewBox="0 0 1200 1800" role="img" aria-labelledby="title desc">
+  <title id="title">刷文章，学单词</title>
+  <desc id="desc">一张以主动阅读和词汇积累为主题的中文学习海报。</desc>
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" fill="none" stroke="#D8D4CA" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="15" flood-color="#101010" flood-opacity="0.14"/>
+    </filter>
+    <filter id="smallShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#101010" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="1800" fill="#F5F1E8"/>
+  <rect x="32" y="32" width="1136" height="1736" rx="10" fill="url(#grid)" opacity="0.72"/>
+  <path d="M32 430H1168M32 1518H1168" stroke="#111111" stroke-width="3"/>
+
+  <g font-family="Arial, 'Microsoft YaHei', 'Noto Sans SC', sans-serif" fill="#111111">
+    <text x="78" y="104" font-size="24" font-weight="700" letter-spacing="5">ACTIVE READING / 01</text>
+    <text x="1120" y="104" text-anchor="end" font-size="22" font-weight="700">阅读 · 词汇 · 复习</text>
+
+    <text x="76" y="212" font-size="104" font-weight="900" letter-spacing="-4">刷文章，</text>
+    <text x="76" y="312" font-size="104" font-weight="900" letter-spacing="-4">学单词</text>
+    <rect x="80" y="340" width="236" height="15" fill="#F25F4C"/>
+    <text x="80" y="392" font-size="29" font-weight="700">把生词放回语境里，记得更久。</text>
+  </g>
+
+  <g transform="translate(88 500) rotate(-3)" filter="url(#shadow)">
+    <rect width="1024" height="600" rx="6" fill="#FFFDF8" stroke="#111111" stroke-width="5"/>
+    <path d="M511 12V588" stroke="#D0C8BB" stroke-width="3"/>
+    <path d="M42 52H466M42 76H436" stroke="#111111" stroke-width="4"/>
+    <text x="42" y="132" font-family="Georgia, serif" font-size="52" font-weight="700" fill="#1E40FF">A tiny shift</text>
+    <text x="42" y="181" font-family="Georgia, serif" font-size="30" fill="#111111">can change the way we see the world.</text>
+    <rect x="42" y="229" width="420" height="19" fill="#F6D64A"/>
+    <text x="42" y="247" font-family="Georgia, serif" font-size="30" fill="#111111">Curiosity turns a sentence into a door.</text>
+    <g stroke="#A8A29A" stroke-width="4">
+      <path d="M42 303H458M42 336H438M42 369H465M42 402H420M42 435H454M42 468H407M42 501H453"/>
+    </g>
+    <rect x="554" y="64" width="384" height="188" fill="#1E40FF"/>
+    <text x="582" y="111" font-size="22" font-weight="700" fill="#F5F1E8" letter-spacing="3">WORD IN CONTEXT</text>
+    <text x="582" y="170" font-family="Georgia, serif" font-size="54" font-weight="700" fill="#FFFFFF">curiosity</text>
+    <text x="582" y="211" font-size="24" fill="#F5F1E8">好奇心 · 求知欲</text>
+    <path d="M554 310H938" stroke="#A8A29A" stroke-width="4"/>
+    <path d="M554 348H920M554 385H934M554 422H898M554 459H926M554 496H908" stroke="#A8A29A" stroke-width="4"/>
+  </g>
+
+  <g transform="translate(100 1115)">
+    <text x="0" y="0" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="26" font-weight="800" letter-spacing="4" fill="#F25F4C">3 STEPS TO REMEMBER</text>
+    <g transform="translate(0 44)">
+      <circle cx="34" cy="34" r="34" fill="#111111"/>
+      <text x="34" y="44" text-anchor="middle" font-size="27" font-weight="800" fill="#FFFFFF">01</text>
+      <text x="94" y="29" font-size="34" font-weight="900">先读懂</text>
+      <text x="94" y="65" font-size="22" fill="#55504A">先抓大意，再看细节。</text>
+    </g>
+    <g transform="translate(0 152)">
+      <circle cx="34" cy="34" r="34" fill="#F25F4C"/>
+      <text x="34" y="44" text-anchor="middle" font-size="27" font-weight="800" fill="#FFFFFF">02</text>
+      <text x="94" y="29" font-size="34" font-weight="900">再记词</text>
+      <text x="94" y="65" font-size="22" fill="#55504A">词义、搭配、例句一起记。</text>
+    </g>
+    <g transform="translate(0 260)">
+      <circle cx="34" cy="34" r="34" fill="#1E40FF"/>
+      <text x="34" y="44" text-anchor="middle" font-size="27" font-weight="800" fill="#FFFFFF">03</text>
+      <text x="94" y="29" font-size="34" font-weight="900">回头用</text>
+      <text x="94" y="65" font-size="22" fill="#55504A">在下一篇文章里遇见它。</text>
+    </g>
+  </g>
+
+  <g transform="translate(720 1152) rotate(5)" filter="url(#smallShadow)">
+    <rect width="330" height="250" rx="8" fill="#F6D64A" stroke="#111111" stroke-width="4"/>
+    <text x="28" y="47" font-size="19" font-weight="800" letter-spacing="2">TODAY'S NOTE</text>
+    <text x="28" y="105" font-family="Georgia, serif" font-size="43" font-weight="700">context</text>
+    <text x="28" y="142" font-size="23" font-weight="700">语境 / 上下文</text>
+    <path d="M28 174H296" stroke="#111111" stroke-width="3"/>
+    <text x="28" y="209" font-size="19" fill="#302C21">每读一篇，留下一个词。</text>
+  </g>
+
+  <g transform="translate(78 1580)">
+    <rect width="1044" height="116" fill="#111111"/>
+    <text x="38" y="49" font-size="21" fill="#F5F1E8" letter-spacing="3">READ MORE</text>
+    <text x="38" y="88" font-size="24" font-weight="700" fill="#FFFFFF">今天读一段，明天多一种表达。</text>
+    <path d="M842 59H988M950 27L988 59L950 91" fill="none" stroke="#F6D64A" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter"/>
+  </g>
+
+  <text x="1120" y="1740" text-anchor="end" font-family="Arial, 'Microsoft YaHei', sans-serif" font-size="19" font-weight="700" fill="#111111">ACTIVE READING CLUB</text>
+</svg>

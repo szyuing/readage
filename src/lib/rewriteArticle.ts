@@ -9,7 +9,7 @@ export interface BuildLevelRewriteArticleOptions {
   date: string;
 }
 
-/** Build a rewrite as a new article without carrying over review-only metadata. */
+/** Build a rewrite as an ordinary independent article without carrying over review-only metadata. */
 export function buildLevelRewriteArticle({
   sourceArticle,
   candidate,
@@ -23,14 +23,13 @@ export function buildLevelRewriteArticle({
     description: candidate.description,
     date,
     status: 'In Progress',
-    source: 'level_rewrite',
+    source: 'user_input',
     level: levelRating.level,
     levelRating,
-    rewriteTargetLevel: levelRating.level,
-    parentArticleId: sourceArticle.id,
-    parentArticleTitle: sourceArticle.title,
+    generatedFromArticleId: sourceArticle.id,
+    generatedFromArticleTitle: sourceArticle.title,
+    generationKind: 'level-rewrite',
     content: candidate.paragraphs,
-    keyWords: candidate.keyWords,
     topic: sourceArticle.topic,
     importEnrichmentStatus: 'pending',
   };

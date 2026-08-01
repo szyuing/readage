@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Article } from '../src/types';
 import type { RecommendedArticleCandidate } from '../src/lib/articleValidation';
 import { buildLevelRewriteArticle } from '../src/lib/rewriteArticle';
+import { getArticleHighlightTerms } from '../src/components/ReadingScreen';
 
 function sourceArticle(): Article {
   return {
@@ -24,7 +25,7 @@ const candidate: RecommendedArticleCandidate = {
   keyWords: ['rewritten'],
 };
 
-test('buildLevelRewriteArticle creates a standalone article without inherited review words', () => {
+test('buildLevelRewriteArticle creates an ordinary independent article without rewrite UI metadata', () => {
   const article = buildLevelRewriteArticle({
     sourceArticle: sourceArticle(),
     candidate,
@@ -38,8 +39,23 @@ test('buildLevelRewriteArticle creates a standalone article without inherited re
     date: 'Jul 25, 2026',
   });
 
-  assert.equal(article.source, 'level_rewrite');
+  assert.equal(article.source, 'user_input');
   assert.deepEqual(article.content, candidate.paragraphs);
-  assert.deepEqual(article.keyWords, candidate.keyWords);
+  assert.equal(article.keyWords, undefined);
   assert.equal(article.embeddedReviewWords, undefined);
+  assert.equal(article.parentArticleId, undefined);
+  assert.equal(article.parentArticleTitle, undefined);
+  assert.equal(article.rewriteTargetLevel, undefined);
+  assert.equal(article.generatedFromArticleId, 'source-article');
+  assert.equal(article.generatedFromArticleTitle, 'Original article');
+});
+
+test('legacy rewrites do not render persisted keywords as highlighted terms', () => {
+  const legacyRewrite: Article = {
+    ...sourceArticle(),
+    source: 'level_rewrite',
+    keyWords: ['Silicon Valley'],
+  };
+
+  assert.deepEqual(getArticleHighlightTerms(legacyRewrite), []);
 });

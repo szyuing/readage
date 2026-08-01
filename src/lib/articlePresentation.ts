@@ -41,6 +41,14 @@ function isSeparatorParagraph(value: string): boolean {
   return /^[\s\-_=*.:·•—–]{8,}$/u.test(value.trim());
 }
 
+function isImportFurnitureParagraph(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    /^Read:\s+/i.test(trimmed)
+    || /^This (?:article|poem) (?:appears|was featured|was downloaded)\b/i.test(trimmed)
+  );
+}
+
 function isTitleParagraph(value: string, articleTitle: string): boolean {
   const paragraph = normalizeComparableText(value);
   const title = normalizeComparableText(articleTitle);
@@ -51,7 +59,11 @@ export function classifyArticleParagraph(
   paragraph: string,
   articleTitle: string,
 ): ArticleParagraphKind {
-  if (isNavigationParagraph(paragraph) || isSeparatorParagraph(paragraph)) return 'furniture';
+  if (
+    isNavigationParagraph(paragraph)
+    || isSeparatorParagraph(paragraph)
+    || isImportFurnitureParagraph(paragraph)
+  ) return 'furniture';
   if (isTitleParagraph(paragraph, articleTitle)) return 'title';
   if (AUTHOR_PREFIX_RE.test(paragraph.trim())) return 'author';
   return 'body';

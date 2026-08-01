@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { ArticleProgressRow, WeakPointMetric } from '../types';
 import { AppPageHeader } from './AppPageHeader';
+import { ReadingDataNotice } from './ReadingDataNotice';
 import {
   downloadLocalDataBackup,
   exportLocalDataBackup,
@@ -124,11 +125,13 @@ export const MyLearningScreen: React.FC<MyLearningScreenProps> = ({
               学习数据保存在本机浏览器
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-[#4A5568]">
-              进度、词表、文章历史与讨论记录只写在你的设备上，不会随账号同步到服务器。
+              常规学习档案默认只写在当前设备，不会自动上传为云端档案。AI 请求和推荐诊断有单独的数据去向，请查看下方说明。
               换设备或清除站点数据会丢失进度；可用下方「导出备份」保存到文件。
             </p>
           </div>
         </section>
+
+        <ReadingDataNotice />
 
         <div className="grid grid-cols-2 gap-3 sm:gap-4">
           <MetricCard value={articlesReadCount} label="已完成文章" />

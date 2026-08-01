@@ -18,6 +18,7 @@ import {
   getSystemTimeZone,
   getUtcInstantForLocalDayEnd,
 } from './dateUtils';
+import { applyRmeReview, rmeProfileForState } from './rmeV4Bridge';
 
 // FSRS 参数配置（与主系统保持一致）
 const FSRS_PARAMETERS = generatorParameters({
@@ -180,7 +181,15 @@ export function finalizeDailyEvidence(
   const reviewTime = getUtcInstantForLocalDayEnd(localDate, userTimezone);
 
   // 提交 FSRS 复习
-  const updatedState = submitFsrsReview(memoryState, pendingGrade, reviewTime);
+  const stateWithRme = memoryState.rme
+    ? memoryState
+    : { ...memoryState, rme: rmeProfileForState(memoryState) };
+  const updatedState = applyRmeReview(
+    submitFsrsReview(stateWithRme, pendingGrade, reviewTime),
+    pendingGrade,
+    reviewTime,
+    dailyEvidence.averageRmeQuality ?? 1,
+  );
 
   return updatedState;
 }
